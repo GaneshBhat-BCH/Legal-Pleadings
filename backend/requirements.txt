@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+python-dotenv
+asyncpg
+databases
+openai
+pypdf
+pdfminer.six
+pytesseract
+Pillow
+python-multipart
+httpx
+tiktoken
