@@ -15,7 +15,8 @@ echo.
 set /p CHOICE="Choose an option (1/2/3): "
 
 if "%CHOICE%"=="1" (
-    call setup_env.bat
+    echo [INFO] Launching Simple Setup via PowerShell...
+    powershell -ExecutionPolicy Bypass -File setup_simple.ps1
     goto :EOF
 )
 
