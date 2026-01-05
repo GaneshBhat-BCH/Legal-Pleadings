@@ -72,7 +72,7 @@ async def search_documents(request: SearchRequest, db = Depends(get_db)):
                 processed_candidates.append({
                     "pdf_id": pdf_id,
                     "pdf_name": row["file_name"],
-                    "match_score_raw": float(row["max_sim"]),
+                    "match_score_raw": len(matches) / len(request.questions_answers) if request.questions_answers else 0,
                     "relevance_details": {"vector": float(row["max_sim"]), "keyword_rank": float(row["max_rank"])},
                     "matched_qa": matches,
                     "unmatched_qa": non_matches,
