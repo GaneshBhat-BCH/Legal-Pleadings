@@ -63,8 +63,11 @@ async def analyze_document_and_answer(text_content: str, questions_config: dict 
     else:
         questions_list = questions_config.get("QUESTIONS", [])
         global_instr = questions_config.get("global_instructions", {})
-        hms_policy = questions_config.get("HMS_COI_Policy", {})
-        phs_policy = questions_config.get("PHS_COI_Policy", {})
+        
+        # Extract Ref Policies (handle both old and new structure just in case)
+        ref_policies = questions_config.get("REFERENCE_POLICIES", questions_config)
+        hms_policy = ref_policies.get("HMS_COI_Policy", {})
+        phs_policy = ref_policies.get("PHS_COI_Policy", {})
 
     prompt = f"""
     You are a forensic document auditor. Your goal is to extract specific details from the document text provided below.

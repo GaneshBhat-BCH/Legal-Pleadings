@@ -83,7 +83,7 @@ echo Launching server...
 start /B python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
 
 echo Waiting for server to start...
-timeout /t 5 /nobreak >nul
+timeout /t 15 /nobreak >nul
 
 REM Check if server is running
 curl -s http://localhost:8000/ >nul 2>&1

@@ -190,70 +190,65 @@ graph TB
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Client
+    participant Client as Client (Automation Anywhere)
     participant UploadRouter as Upload Router<br/>/api/upload
     participant Logger
     participant Database as PostgreSQL
     participant AIService as AI Service
-    participant AzureOpenAI as Azure OpenAI<br/>GPT-5
+    participant AzureOpenAI as Azure OpenAI
 
+    Client->>Client: Extract data from Automation Anywhere
     Client->>UploadRouter: POST /api/upload<br/>{file_name, pdf_text, user_text}
     activate UploadRouter
     
     UploadRouter->>Logger: Log "Upload request received"
     
     Note over UploadRouter: Step 1: Create Document Record
-    UploadRouter->>Database: INSERT INTO pdf_documents<br/>(file_name, file_path)
+    UploadRouter->>Database: INSERT INTO pdf_documents<br/>(file_name, file_path="text-input")
     Database-->>UploadRouter: Return pdf_id (UUID)
-    UploadRouter->>Logger: Log "Document record created"
     
     Note over UploadRouter: Step 2: Prepare Context
-    UploadRouter->>UploadRouter: Combine user_text + pdf_text<br/>into full_context
+    UploadRouter->>UploadRouter: Combine input:<br/>full_context = "User Input: " + user_text<br/>+ "Document Content: " + pdf_text
     
-    Note over UploadRouter: Step 3: AI Analysis
-    UploadRouter->>AIService: analyze_document_and_answer()<br/>(full_context, QUESTIONS)
+    Note over UploadRouter: Step 3: AI Analysis (Question Extraction)
+    UploadRouter->>AIService: analyze_document_and_answer(full_context, QUESTIONS_DATA)
     activate AIService
-    AIService->>Logger: Log "Constructing prompt"
-    
-    AIService->>AzureOpenAI: Chat Completion Request<br/>Model: gpt-5<br/>Format: JSON
-    AzureOpenAI-->>AIService: JSON Response<br/>{answers: [...], usage: {...}}
-    AIService->>Logger: Log "Response received"
-    AIService-->>UploadRouter: Return {answers, usage}
+    AIService->>AzureOpenAI: Chat Completion (model: gpt-5)<br/>System: "Forensic auditor AI"<br/>Prompt: Extract answers based on QUESTIONS_DATA
+    AzureOpenAI-->>AIService: JSON {answers: [...], usage: {...}}
+    AIService-->>UploadRouter: Return answers & usage
     deactivate AIService
     
-    Note over UploadRouter: Step 4: Prepare Answers
-    UploadRouter->>UploadRouter: Match AI answers with QUESTIONS<br/>Build answers_result array
+    Note over UploadRouter: Step 4: Process Answers
+    UploadRouter->>UploadRouter: Normalize answers (assign 'N/A' if missing)<br/>Map to Question IDs
     
-    Note over UploadRouter: Step 5: Batch Embeddings for Answers
+    Note over UploadRouter: Step 5: Answer Embeddings
     UploadRouter->>AIService: get_embeddings(texts_to_embed)
     activate AIService
-    AIService->>AzureOpenAI: Embeddings Request<br/>Model: text-embedding-3-large<br/>Dimensions: 1536
-    AzureOpenAI-->>AIService: Return embeddings array
+    AIService->>AzureOpenAI: Embeddings Batch Request<br/>(model: text-embedding-3-large, dim: 1536)
+    AzureOpenAI-->>AIService: Return list of vectors
     AIService-->>UploadRouter: Return all_embeddings
     deactivate AIService
     
     Note over UploadRouter: Step 6: Store Answers
-    UploadRouter->>Database: INSERT INTO pdf_answers<br/>(pdf_id, question_id, answer_text,<br/>answer_embedding)
-    UploadRouter->>Logger: Log "AI Analysis & Storage complete"
+    UploadRouter->>Database: INSERT INTO pdf_answers<br/>(pdf_id, question_id, answer_text, answer_embedding)
     
-    Note over UploadRouter: Step 7: Create Search Chunks
-    UploadRouter->>UploadRouter: Build chunks_to_index:<br/>- User context<br/>- Q&A pairs (if answer != N/A)
+    Note over UploadRouter: Step 7: Variable Chunking Strategy (RAG)
+    UploadRouter->>UploadRouter: semantic variable checking
     
-    Note over UploadRouter: Step 8: Batch Embeddings for Chunks
+    Note over UploadRouter: Step 8: Chunk Embeddings
     UploadRouter->>AIService: get_embeddings(chunks_to_index)
     activate AIService
-    AIService->>AzureOpenAI: Embeddings Request
+    AIService->>AzureOpenAI: Embeddings Batch Request<br/>(model: text-embedding-3-large)
     AzureOpenAI-->>AIService: Return chunk_vectors
-    AIService-->>UploadRouter: Return embeddings
+    AIService-->>UploadRouter: Return vectors
     deactivate AIService
     
-    Note over UploadRouter: Step 9: Store Chunks with Dual Index
-    UploadRouter->>Database: INSERT INTO pdf_chunks<br/>(pdf_id, chunk_text,<br/>chunk_embedding, search_vector)
-    Note over Database: Vector Index: ivfflat<br/>Text Index: GIN (tsvector)
+    Note over UploadRouter: Step 9: Store Chunks (Dual Indexing)
+    UploadRouter->>Database: INSERT INTO pdf_chunks (chunk_embedding, search_vector)<br/>search_vector = to_tsvector('english', chunk_text)
+    Note over Database: Indexes Updated:<br/>1. IVFFlat (Vector Ops)<br/>2. GIN (Full-Text Search)
     
     UploadRouter->>Logger: Log "Processing Complete"
-    
-    UploadRouter-->>Client: Return {status, pdf_id,<br/>answers, chunks_created,<br/>token_usage}
+    UploadRouter-->>Client: Return JSON Response<br/>{status, pdf_id, answers, chunks_created}
     deactivate UploadRouter
 ```
 
@@ -291,7 +286,7 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Client
+    participant Client as Client (Automation Anywhere)
     participant SearchRouter as Search Router<br/>/api/search
     participant Logger
     participant Database as PostgreSQL
@@ -301,68 +296,53 @@ sequenceDiagram
     Client->>SearchRouter: POST /api/search<br/>{questions_answers: [...]}
     activate SearchRouter
     
-    SearchRouter->>Logger: Log "Search request received"
+    Note over SearchRouter: Step 1: Query Construction
+    SearchRouter->>SearchRouter: Concatenate Q&A pairs -> query_text
     
-    Note over SearchRouter: Step 1: Prepare Query Text
-    SearchRouter->>SearchRouter: Combine all Q&A pairs<br/>into query_text string
+    Note over SearchRouter: Step 2: BM25-Style Keyword Search (Primary)
+    SearchRouter->>Database: SELECT ... ts_rank(search_vector, plainto_tsquery('english', :query))<br/>FROM pdf_chunks ... ORDER BY rank DESC LIMIT 10
+    Database-->>SearchRouter: Return Keyword Candidates
     
-    Note over SearchRouter: Step 2: BM25-STYLE KEYWORD SEARCH (Free)
-    SearchRouter->>Logger: Log "Attempting Keyword-First search"
-    SearchRouter->>Database: SELECT with ts_rank()<br/>(BM25-style ranking)<br/>WHERE search_vector @@<br/>plainto_tsquery(query_text)
-    Note over Database: Uses GIN index<br/>on search_vector (tsvector)<br/>BM25-like ranking algorithm
-    Database-->>SearchRouter: Return keyword results<br/>(max 10 PDFs)
-    
-    Note over SearchRouter: Step 3: Verify Keyword Results
-    loop For each keyword result
-        SearchRouter->>Database: SELECT question_id, answer_text<br/>FROM pdf_answers<br/>WHERE pdf_id = ?
-        Database-->>SearchRouter: Return stored answers
-        
-        SearchRouter->>SearchRouter: Match user Q&A with stored Q&A<br/>- Check question_id match<br/>- Check question_text match<br/>- Token-based comparison
-        
-        SearchRouter->>SearchRouter: Calculate valid_match_count
+    Note over SearchRouter: Step 3: Forensic Verification(AI Auditor ) (Stage 1)
+    loop For each Candidate
+        SearchRouter->>Database: Fetch stored answers (pdf_answers)
+        SearchRouter->>SearchRouter: Verification Logic:<br/>1. Match Request Q vs Stored Q (ID/Text)<br/>2. If Match: Extract User Ref Tokens & Stored Answer Tokens<br/>3. Strict Check: If no token overlap, mark Mismatch (Lenient)
+        SearchRouter->>SearchRouter: Count Valid Matches (valid_match_count)
     end
     
-    SearchRouter->>SearchRouter: Filter candidates where<br/>valid_match_count > 0
+    SearchRouter->>SearchRouter: Filter verified_candidates (valid_match_count > 0)
     
-    alt Keyword found >= 3 verified PDFs
-        SearchRouter->>Logger: Log "Keyword search sufficient"
-        Note over SearchRouter: Set search_method =<br/>"SQL Keyword (Free)"
-        SearchRouter->>SearchRouter: Skip vectorization<br/>(Cost savings!)
-    else Keyword found < 3 verified PDFs
-        SearchRouter->>Logger: Log "Augmenting with Vectorization"
-        Note over SearchRouter: Set search_method =<br/>"Hybrid (Keyword + Vector Fallback)"
+    alt Verified Count < 3 (Insufficient Results)
+        Note over SearchRouter: Step 4: Hybrid Fallback (Vector Search)
+        SearchRouter->>Logger: Log "Augmenting with Vector Search"
         
-        Note over SearchRouter: Step 4: VECTOR SEARCH (Fallback)
         SearchRouter->>AIService: get_embeddings(query_text)
         activate AIService
-        AIService->>AzureOpenAI: Embeddings Request<br/>Model: text-embedding-3-large
-        AzureOpenAI-->>AIService: Return query_embedding
-        AIService-->>SearchRouter: Return embedding vector
+        AIService->>AzureOpenAI: Embeddings Request (text-embedding-3-large)
+        AzureOpenAI-->>AIService: Return query_vector
+        AIService-->>SearchRouter: Return vector
         deactivate AIService
         
-        SearchRouter->>Database: SELECT with cosine similarity<br/>WHERE 1 - (chunk_embedding <=> embedding) > 0.5
-        Note over Database: Uses ivfflat index<br/>on chunk_embedding
-        Database-->>SearchRouter: Return vector results<br/>(max 10 PDFs)
+        SearchRouter->>Database: SELECT ... (1 - (chunk_embedding <=> :vector)) > 0.5<br/>ORDER BY similarity DESC LIMIT 10
+        Database-->>SearchRouter: Return Vector Candidates
         
-        SearchRouter->>SearchRouter: Filter out PDFs already<br/>found by keyword search
+        SearchRouter->>SearchRouter: Filter Duplicate PDFs (already found by keyword)
         
-        Note over SearchRouter: Step 5: Verify Vector Results
-        loop For each NEW vector result
-            SearchRouter->>Database: SELECT answers WHERE pdf_id = ?
-            Database-->>SearchRouter: Return stored answers
-            SearchRouter->>SearchRouter: Match & verify Q&A
+        Note over SearchRouter: Step 5: Forensic Verification(AI Auditor ) (Stage 2)
+        loop For each New Candidate
+            SearchRouter->>Database: Fetch stored answers
+            SearchRouter->>SearchRouter: Run Verification Logic
         end
         
-        SearchRouter->>SearchRouter: Combine keyword + vector<br/>candidates
-        SearchRouter->>Logger: Log "Verification complete"
+        SearchRouter->>SearchRouter: Combine Keyword + Vector Candidates
+    else Verified Count >= 3
+        Note over SearchRouter: Keyword Search Sufficient (Skip Vector)
+        SearchRouter->>Logger: Log "Skipping Vectorization (Cost Savings)"
     end
     
-    Note over SearchRouter: Step 6: Format Results
-    SearchRouter->>SearchRouter: Sort by valid_match_count<br/>and match_score_raw
-    SearchRouter->>SearchRouter: Take top 3 results
-    SearchRouter->>SearchRouter: Format with match details
-    
-    SearchRouter-->>Client: Return {search_method_used,<br/>results: [top 3 matches]}
+    Note over SearchRouter: Step 6: Final Ranking & Response
+    SearchRouter->>SearchRouter: Sort by (Valid Match Count DESC, Match Score DESC)<br/>Select Top 3
+    SearchRouter-->>Client: Return {search_method, results: [Top 3]}
     deactivate SearchRouter
 ```
 

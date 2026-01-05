@@ -93,6 +93,9 @@ async def upload_file(
              
         for item in answers_result:
             if item["answer_text"] != "N/A":
+                # Variable Chunking Strategy: 
+                # Each Question-Answer pair is treated as a single, semantic logical unit (one chunk).
+                # This ensures the question context is never separated from the answer.
                 chunks_to_index.append(f"Question: {item['question_text']}\nAnswer: {item['answer_text']}")
 
         # 7. Batch Embeddings for Chunks
