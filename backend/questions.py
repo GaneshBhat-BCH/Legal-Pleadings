@@ -74,7 +74,7 @@ QUESTIONS_DATA = {
 
       "text": "How much time/effort does the researcher spend working for the company?", 
 
-      "prompt": "Extract the data from the input and identify time or effort spent working for the company. Return the value with units, either 'hours' or '%' (e.g. '5 hours/week' or '10%'). If not mentioned, return NA." 
+      "prompt": "Extract the data from the input and identify time or effort spent working for the company. You MUST convert all time values into a percentage of full-time effort (FTE). ASSUMPTIONS: Full-time = 40 hours/week (160 hours/month). CALCULATION: (Hours / 40) * 100. RULES: If calculated % > 20, return '>20 %'. If calculated % <= 20, return '<20 %'. If already %, apply the same relative logic. Return ONLY the string '>20 %' or '<20 %'. If not mentioned, return NA." 
 
     }, 
 

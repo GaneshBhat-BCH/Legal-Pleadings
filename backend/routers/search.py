@@ -52,30 +52,19 @@ async def search_documents(request: SearchRequest, db = Depends(get_db)):
                     
                     if found_answer and found_answer != "N/A":
                         user_ref = item.get("answer_text") or item.get("answer") or ""
-                        is_match = True
-                        status_msg = "Match"
                         
-                        if user_ref.strip():
-                            import re
-                            def get_tokens(text):
-                                tokens = re.findall(r'\w+', text.lower())
-                                return set(tokens)
-                            
-                            user_tokens = get_tokens(user_ref)
-                            pdf_tokens = get_tokens(found_answer)
-                            # Lenient matching: still match if no tokens but high vector sim, 
-                            # or if there's at least one common token.
-                            # For now, let's just log and keep it relatively strict but fixed.
-                            if not user_tokens & pdf_tokens:
-                                # If it's a tiny answer (like a name or date), tokens might fail
-                                # but let's be slightly more lenient
-                                if len(user_tokens) > 0 and len(pdf_tokens) > 0:
-                                    is_match = False
-                                    status_msg = "Token Mismatch"
+                        # STRICT MATCHING LOGIC
+                        # Normalize strings: lowercase and strip whitespace
+                        norm_user = user_ref.strip().lower()
+                        norm_pdf = found_answer.strip().lower()
                         
-                        if is_match:
+                        if norm_user == norm_pdf:
+                            is_match = True
+                            status_msg = "Match"
                             matches.append({"question": q_text, "pdf_answer": found_answer, "user_answer_ref": user_ref})
                         else:
+                            is_match = False
+                            status_msg = "Mismatch"
                             non_matches.append({"question": q_text, "pdf_answer": found_answer, "user_answer_ref": user_ref, "status": status_msg})
                     else:
                         non_matches.append({"question": q_text, "status": "Not Found in this PDF"})
