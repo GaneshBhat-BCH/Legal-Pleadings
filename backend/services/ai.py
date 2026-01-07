@@ -55,22 +55,30 @@ async def analyze_document_and_answer(text_content: str, questions_config: dict 
     log_event("AI Service", "constructing prompt", "START")
     
     # Handle backward compatibility or list input
-    if isinstance(questions_config, list):
+    # Handle new nested structure (QUESTIONS_DATA top level)
+    if isinstance(questions_config, dict) and "QUESTIONS_DATA" in questions_config:
+        # New Structure
+        root_data = questions_config["QUESTIONS_DATA"]
+        questions_list = root_data.get("QUESTIONS", [])
+        global_instr = root_data.get("global_instructions", {})
+        ref_policies = root_data.get("REFERENCE_POLICIES", {})
+        system_role = questions_config.get("role", "You are a forensic document auditor.")
+    elif isinstance(questions_config, list):
+        # Legacy list
         questions_list = questions_config
         global_instr = {}
-        hms_policy = {}
-        phs_policy = {}
+        ref_policies = {}
+        system_role = "You are a forensic document auditor."
     else:
+        # Intermediate structure (flat dict)
         questions_list = questions_config.get("QUESTIONS", [])
         global_instr = questions_config.get("global_instructions", {})
-        
-        # Extract Ref Policies (handle both old and new structure just in case)
         ref_policies = questions_config.get("REFERENCE_POLICIES", questions_config)
-        hms_policy = ref_policies.get("HMS_COI_Policy", {})
-        phs_policy = ref_policies.get("PHS_COI_Policy", {})
+        system_role = "You are a forensic document auditor."
 
     prompt = f"""
-    You are a forensic document auditor. Your goal is to extract specific details from the document text provided below.
+    {system_role}
+    Your goal is to extract specific details from the document text provided below.
     
     DOCUMENT CONTENT:
     ~~~~~~~~~~~~~~~~~
@@ -84,8 +92,7 @@ async def analyze_document_and_answer(text_content: str, questions_config: dict 
     {json.dumps(global_instr, indent=2)}
 
     REFERENCE POLICIES:
-    HMS_COI_Policy: {json.dumps(hms_policy, indent=2)}
-    PHS_COI_Policy: {json.dumps(phs_policy, indent=2)}
+    {json.dumps(ref_policies, indent=2)}
 
     QUESTIONS AND EXTRACTION PROMPTS:
     {json.dumps(questions_list, indent=2)}
@@ -105,7 +112,7 @@ async def analyze_document_and_answer(text_content: str, questions_config: dict 
         response = await client.chat.completions.create(
             model=GPT_DEPLOYMENT,
             messages=[
-                {"role": "system", "content": "You are a forensic auditor AI. Extract every possible detail. Do not be lazy. Never answer N/A if any relevant text exists. Follow specific prompts for each question."},
+                {"role": "system", "content": system_role},
                 {"role": "user", "content": prompt}
             ],
             response_format={"type": "json_object"}
