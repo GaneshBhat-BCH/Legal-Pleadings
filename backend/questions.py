@@ -75,12 +75,12 @@ QUESTIONS_DATA = {
       {
         "id": 13,
         "text": "What COI policy applies to this management plan?",
-        "prompt": "Perform a DEEP LEGAL ANALYSIS using ONLY REFERENCE_POLICIES. Review answers from Questions 1–12 and determine which SINGLE policy fully applies. Do NOT combine policies. Output ONLY one value: HMS_COI_Policy, PHS_COI_Policy, BCH_COI_Policy, or Inventor_Equity_and_Licensing_Conflict_Policy."
+        "prompt": "Perform a DEEP LEGAL ANALYSIS using ONLY REFERENCE_POLICIES. Review answers from Questions 1–12. CRITICAL STEP: If a policy is not immediately clear, you MUST RE-READ the RAW INPUT TEXT and perform a second-pass deep analysis to find any matching criteria. Do not return 'NA' unless there is absolutely NO match after this deep review. Determine which SINGLE policy fully applies. Output ONLY one value: HMS_COI_Policy, PHS_COI_Policy, BCH_COI_Policy, or Inventor_Equity_and_Licensing_Conflict_Policy."
       },
       {
         "id": 14,
         "text": "What COI rule applies to this management plan?",
-        "prompt": "Perform a DEEP RULE-BY-RULE ANALYSIS. Using the policy selected in Question 13, evaluate each rule. A rule applies ONLY IF ALL its conditions are satisfied. Partial matches are NOT allowed. Output ONLY the Exact Rule Name from the 'Name' field in REFERENCE_POLICIES. Do NOT include the Rule ID or any other text."
+        "prompt": "Perform a DEEP RULE-BY-RULE ANALYSIS. 1. If Question 13 is 'NA', return 'NA'. 2. Retrieve the Policy Name from Question 13 and look it up in REFERENCE_POLICIES. 3. Evaluate ALL Rules under that Policy. 4. Select the Rule with the MAXIMUM matched conditions. If the Policy has only one Rule, select it. 5. Output ONLY the Exact Rule Name. If Q13 has a Policy, you MUST return a Rule Name."
       },
       {
         "id": 15,

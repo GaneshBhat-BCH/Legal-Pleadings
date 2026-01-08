@@ -5,6 +5,8 @@ CREATE TABLE IF NOT EXISTS coi_mgmt.pdf_documents (
     pdf_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     file_name TEXT NOT NULL,
     file_path TEXT NOT NULL,
+    input_body TEXT,
+    result_body TEXT,
     uploaded_at TIMESTAMP DEFAULT NOW()
 );
 

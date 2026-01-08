@@ -23,13 +23,24 @@ async def upload_file(
     try:
         # 1. Insert into DB (pdf_documents)
         # Using "text-input" as placeholder for file_path since we don't save to disk
+        # Capture Raw Input Body
+        try:
+            input_body_json = request.model_dump_json()
+        except AttributeError:
+             # Fallback for Pydantic v1
+            input_body_json = request.json()
+
         query_doc = """
-        INSERT INTO coi_mgmt.pdf_documents (file_name, file_path)
-        VALUES (:file_name, :file_path)
+        INSERT INTO coi_mgmt.pdf_documents (file_name, file_path, input_body)
+        VALUES (:file_name, :file_path, :input_body)
         RETURNING pdf_id
         """
         
-        pdf_id = await db.fetch_val(query_doc, values={"file_name": request.file_name, "file_path": "text-input"})
+        pdf_id = await db.fetch_val(query_doc, values={
+            "file_name": request.file_name, 
+            "file_path": "text-input",
+            "input_body": input_body_json
+        })
         log_event("Upload Module", f"Document record created (ID: {pdf_id})", "PROGRESS")
              
         # Combine PDF Text + User Input
@@ -118,7 +129,7 @@ async def upload_file(
             
         log_event("Upload Module", f"Processing Complete. {len(chunks_to_index)} structured chunks indexed.", "SUCCESS")
         
-        return {
+        response_data = {
             "status": "success", 
             "pdf_id": str(pdf_id), 
             "extracted_text_preview": request.pdf_text[:200], 
@@ -126,6 +137,18 @@ async def upload_file(
             "chunks_created": len(chunks_to_index),
             "token_usage": token_usage
         }
+
+        # 8. Update Result Body in DB
+        import json
+        result_body_json = json.dumps(response_data, default=str)
+        query_update_result = """
+        UPDATE coi_mgmt.pdf_documents
+        SET result_body = :result_body
+        WHERE pdf_id = :pdf_id
+        """
+        await db.execute(query_update_result, values={"result_body": result_body_json, "pdf_id": pdf_id})
+
+        return response_data
         
     except Exception as e:
         print(f"Error: {e}")
