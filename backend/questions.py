@@ -80,7 +80,7 @@ QUESTIONS_DATA = {
       {
         "id": 14,
         "text": "What COI rule applies to this management plan?",
-        "prompt": "Perform a DEEP RULE-BY-RULE ANALYSIS. 1. If Question 13 is 'NA', return 'NA'. 2. Retrieve the Policy Name from Question 13 and look it up in REFERENCE_POLICIES. 3. Evaluate ALL Rules under that Policy. 4. Select the Rule with the MAXIMUM matched conditions. If the Policy has only one Rule, select it. 5. Output ONLY the Exact Rule Name. If Q13 has a Policy, you MUST return a Rule Name."
+        "prompt": "Perform a DEEP RULE-BY-RULE ANALYSIS. 1. If Question 13 is 'NA', return 'NA'. 2. Retrieve the Policy Name from Question 13 and look it up in REFERENCE_POLICIES. 3. Evaluate ALL Rules under that Policy. 4. Select the SINGLE Rule with the MAXIMUM matched conditions. 5. Output ONLY the EXACT Rule Name as it appears in REFERENCE_POLICIES. Do NOT return multiple rules. Do NOT return lists. If the Policy has only one Rule, return its Name."
       },
       {
         "id": 15,
