@@ -153,7 +153,7 @@ QUESTIONS_DATA = {
 
       "Inventor_Equity_and_Licensing_Conflict_Policy": {
         "Name": "Inventor Equity and Licensing Conflict Policy Rule",
-        "Rule": "When an individual has equity in the private company and is the inventor of technology and BCH aims to obtain a license to develop and commercialize the technology."
+        "Rule": "When an individual has equity in the private company and is the inventor or co-inventor of technology and BCH aims or discussion to obtain a license to develop and commercialize the technology."
       }
     }
   }
