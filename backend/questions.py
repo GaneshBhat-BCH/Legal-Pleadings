@@ -35,12 +35,12 @@ QUESTIONS_DATA = {
       {
         "id": 5,
         "text": "How much will the researcher be compensated in cash from the company annually?",
-        "prompt": "Extract the data from the input and identify the annual cash compensation. The result should be ≤ $25,000 or > $25,000. If there are no details, return NA."
+        "prompt": "Extract the data from the input and identify the annual cash compensation. The result should be ≤ $ 25000 or > $ 25000. If there are no details, return NA."
       },
       {
         "id": 6,
         "text": "How much time/effort does the researcher spend working for the company?",
-        "prompt": "Extract the data from the input and identify time or effort spent working for the company. Convert to percentage of FTE. Full-time = 40 hours/week. (Hours / 40) * 100. If >20 return '>20 %'. If <=20 return '<20 %'. Return ONLY these values. If not mentioned, return NA."
+        "prompt": "Extract the data from the input and identify time or effort spent working for the company. Convert to percentage of FTE. Full-time = 40 hours/week. (Hours / 40) * 100. If >20 return '> 20 %'. If ≤20 return '≤ 20 %'. Return ONLY these values. If not mentioned, return NA."
       },
       {
         "id": 7,

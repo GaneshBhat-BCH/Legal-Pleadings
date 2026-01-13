@@ -32,6 +32,14 @@ async def search_documents(request: SearchRequest, db = Depends(get_db)):
         # Helper: Process a list of DB rows into Verified Forensic Candidates
         async def get_verified_candidates(db_rows):
             processed_candidates = []
+            
+            # Weighted Scoring Configuration
+            # Q1 (Cofounder), Q13 (Policy), Q14 (Rule), Q15 (Exemption) → High Weight
+            HIGH_WEIGHT_IDS = {"1", "13", "14", "15"}
+            HIGH_WEIGHT_VAL = 3.0
+            NORMAL_WEIGHT_VAL = 1.0
+            THRESHOLD_PERCENT = 0.80  # 80% match requirement
+
             for row in db_rows:
                 pdf_id = row["pdf_id"]
                 query_answers = "SELECT question_id, question_text, answer_text FROM coi_mgmt.pdf_answers WHERE pdf_id = :pdf_id"
@@ -43,9 +51,16 @@ async def search_documents(request: SearchRequest, db = Depends(get_db)):
                 matches = []
                 non_matches = []
                 
+                total_possible_weight = 0.0
+                current_weighted_score = 0.0
+                
                 for item in request.questions_answers:
                     q_text = item.get("question_text") or item.get("question") or item.get("text") or "Unknown Question"
                     q_id = str(item.get("question_id", ""))
+                    
+                    # Determine Weight
+                    weight = HIGH_WEIGHT_VAL if q_id in HIGH_WEIGHT_IDS else NORMAL_WEIGHT_VAL
+                    total_possible_weight += weight
                     
                     # Try matching by ID first, then by text
                     found_answer = stored_map.get(q_id) or stored_map_text.get(q_text.lower().strip())
@@ -62,6 +77,7 @@ async def search_documents(request: SearchRequest, db = Depends(get_db)):
                             is_match = True
                             status_msg = "Match"
                             matches.append({"question": q_text, "pdf_answer": found_answer, "user_answer_ref": user_ref})
+                            current_weighted_score += weight
                         else:
                             is_match = False
                             status_msg = "Mismatch"
@@ -69,20 +85,27 @@ async def search_documents(request: SearchRequest, db = Depends(get_db)):
                     else:
                         non_matches.append({"question": q_text, "status": "Not Found in this PDF"})
 
+                # Calculate Weighted Percentage
+                score_ratio = (current_weighted_score / total_possible_weight) if total_possible_weight > 0 else 0.0
+
                 processed_candidates.append({
                     "pdf_id": pdf_id,
                     "pdf_name": row["file_name"],
-                    "match_score_raw": len(matches) / len(request.questions_answers) if request.questions_answers else 0,
+                    "match_score_raw": score_ratio, # Using weighted ratio
                     "relevance_details": {"vector": float(row["max_sim"]), "keyword_rank": float(row["max_rank"])},
                     "matched_qa": matches,
                     "unmatched_qa": non_matches,
-                    "valid_match_count": len(matches)
+                    "valid_match_count": len(matches),
+                    "weighted_details": f"Score: {current_weighted_score}/{total_possible_weight}"
                 })
             
-            verified = [c for c in processed_candidates if c["valid_match_count"] > 0]
+            # Filter by Threshold (>= 80%)
+            verified = [c for c in processed_candidates if c["match_score_raw"] >= THRESHOLD_PERCENT]
             # If nothing verified, but we have high vector score, maybe keep them?
-            # For now, let's just return what we have.
-            verified.sort(key=lambda x: (x["valid_match_count"], x["match_score_raw"]), reverse=True)
+            # User requirement: "That match % should come atlest 80%" - so strictly filter.
+            
+            # Sort by Weighted Score (descending)
+            verified.sort(key=lambda x: x["match_score_raw"], reverse=True)
             return verified
 
         # 2. STEP 1: PURE KEYWORD SEARCH (No Model Cost)
