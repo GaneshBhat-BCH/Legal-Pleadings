@@ -75,7 +75,7 @@ QUESTIONS_DATA = {
       {
         "id": 13,
         "text": "What COI policy applies to this management plan?",
-        "prompt": "Perform a DEEP LEGAL ANALYSIS using ONLY REFERENCE_POLICIES. Review answers from Questions 1–12. PRIORITY CHECK: Check FIRST if the researcher is an inventor or co-inventor. If YES, you MUST evaluate against 'Inventor_Equity_and_Licensing_Conflict_Policy' FIRST. If it matches, return that policy. Only if that specific policy does NOT match (or if not an inventor), then proceed to evaluate HMS_COI_Policy, PHS_COI_Policy, or BCH_COI_Policy. If a policy is not immediately clear, you MUST RE-READ the RAW INPUT TEXT. Return 'NA' only if absolutely NO match found after deep review. Output ONLY one value."
+        "prompt": "Perform a DEEP LEGAL ANALYSIS using ONLY REFERENCE_POLICIES. Review answers from Questions 1–12. follow strictly these steps: STEP 1: Check if the researcher is an inventor or co-inventor. STEP 2: IF YES, immediately evaluate the 'Inventor_Equity_and_Licensing_Conflict_Policy'. STEP 3: MEASURE COMPLIANCE: Does the situation matches ALL conditions of that specific policy? STEP 4: DECISION -> If it matches ALL conditions, return 'Inventor_Equity_and_Licensing_Conflict_Policy' and STOP. -> If it does NOT match all conditions (or if researcher is not an inventor), proceed to evaluate HMS_COI_Policy, PHS_COI_Policy, or BCH_COI_Policy and return the best match. Output ONLY one value."
       },
       {
         "id": 14,
