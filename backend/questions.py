@@ -75,7 +75,7 @@ QUESTIONS_DATA = {
       {
         "id": 13,
         "text": "What COI policy applies to this management plan?",
-        "prompt": "Perform a DEEP LEGAL ANALYSIS using ONLY REFERENCE_POLICIES. Review answers from Questions 1–12. CRITICAL STEP: If a policy is not immediately clear, you MUST RE-READ the RAW INPUT TEXT and perform a second-pass deep analysis to find any matching criteria. Do not return 'NA' unless there is absolutely NO match after this deep review. Determine which SINGLE policy fully applies. Output ONLY one value: HMS_COI_Policy, PHS_COI_Policy, BCH_COI_Policy, or Inventor_Equity_and_Licensing_Conflict_Policy."
+        "prompt": "Perform a DEEP LEGAL ANALYSIS using ONLY REFERENCE_POLICIES. Review answers from Questions 1–12. PRIORITY CHECK: Check FIRST if the researcher is an inventor or co-inventor. If YES, you MUST evaluate against 'Inventor_Equity_and_Licensing_Conflict_Policy' FIRST. If it matches, return that policy. Only if that specific policy does NOT match (or if not an inventor), then proceed to evaluate HMS_COI_Policy, PHS_COI_Policy, or BCH_COI_Policy. If a policy is not immediately clear, you MUST RE-READ the RAW INPUT TEXT. Return 'NA' only if absolutely NO match found after deep review. Output ONLY one value."
       },
       {
         "id": 14,
