@@ -115,7 +115,7 @@ QUESTIONS_DATA = {
             "ID": "A3",
             "Name": "Executive Position Rule (formerly the “1(c) Rule”)",
             "Rule": [
-              "The individual holds or seeks to hold an executive role within the company (e.g., CEO, COO, CSO, CMO, or another role with material responsibility for company operations or management).",
+              "The individual holds or seeks to hold an executive role within the company (e.g., CEO, COO, CSO, CMO, or another role with material responsibility for company operations or management). Most importantly, scientific advisory board positions do not count as executive management positions.",
               "The company is for-profit.",
               "The individual participates in clinical research involving the company’s technology.",
               "The individual receives sponsored research funding from the company.",
@@ -150,7 +150,7 @@ QUESTIONS_DATA = {
         "Name": "Inventor Equity and Licensing Conflict Policy Rule",
         "Rule": "When an individual has equity in the private company and is the inventor or co-inventor of technology and BCH aims or discussion to obtain a license to develop and commercialize the technology."
       },
-      
+
       "BCH_COI_Policy": {
         "Name": "BCH COI Policy Rule",
         "Rule": "Boston Children’s has a rebuttable presumption that members of the senior leadership team will not participate in outside for-profit Fiduciary Roles. The presumption can be overcome when there are compelling reasons that the for-profit Fiduciary Role will advance the mission of Boston Children’s Hospital."
