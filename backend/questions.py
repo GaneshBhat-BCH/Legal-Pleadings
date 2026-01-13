@@ -146,14 +146,14 @@ QUESTIONS_DATA = {
         ]
       },
 
-      "BCH_COI_Policy": {
-        "Name": "BCH COI Policy Rule",
-        "Rule": "Boston Children’s has a rebuttable presumption that members of the senior leadership team will not participate in outside for-profit Fiduciary Roles. The presumption can be overcome when there are compelling reasons that the for-profit Fiduciary Role will advance the mission of Boston Children’s Hospital."
-      },
-
       "Inventor_Equity_and_Licensing_Conflict_Policy": {
         "Name": "Inventor Equity and Licensing Conflict Policy Rule",
         "Rule": "When an individual has equity in the private company and is the inventor or co-inventor of technology and BCH aims or discussion to obtain a license to develop and commercialize the technology."
+      },
+      
+      "BCH_COI_Policy": {
+        "Name": "BCH COI Policy Rule",
+        "Rule": "Boston Children’s has a rebuttable presumption that members of the senior leadership team will not participate in outside for-profit Fiduciary Roles. The presumption can be overcome when there are compelling reasons that the for-profit Fiduciary Role will advance the mission of Boston Children’s Hospital."
       }
     }
   }
