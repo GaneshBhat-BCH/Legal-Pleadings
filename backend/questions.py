@@ -12,7 +12,8 @@ QUESTIONS_DATA = {
     },
 
     "assumptions": [
-      "Scientific advisory board positions do NOT count as executive management positions."
+      "Scientific advisory board positions do NOT count as executive management positions.",
+      "Co-Founder” alone is not an executive management position.",
     ],
 
     "QUESTIONS": [
