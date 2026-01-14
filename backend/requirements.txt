@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+python-dotenv
+asyncpg
+databases
+openai
+python-multipart
+httpx
+tiktoken
