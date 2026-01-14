@@ -13,7 +13,7 @@ QUESTIONS_DATA = {
 
     "assumptions": [
       "Scientific advisory board positions do NOT count as executive management positions.",
-      "Co-Founder” alone is not an executive management position.",
+      "A Co-Founder is considered an executive management position only if they hold an executive title or have operational decision-making authority; a Co-Founder who is solely a shareholder, advisor, or holds a non-executive or honorary role is not considered executive management.",
     ],
 
     "QUESTIONS": [
@@ -120,7 +120,7 @@ QUESTIONS_DATA = {
             "ID": "A3",
             "Name": "Executive Position Rule (formerly the “1(c) Rule”)",
             "Rule": [
-              "The individual holds or seeks to hold an executive role within the company (e.g., CEO, COO, CSO, CMO, or another role with material responsibility for company operations or management). Most importantly, scientific advisory board positions do not count as executive management positions.",
+              "The individual holds or seeks to hold an executive role within the company (e.g., CEO, COO, CSO, CMO, or another role with material responsibility for company operations or management). Most importantly, scientific advisory board positions do not count as executive management positions.A Co-Founder is considered an executive management position only if they hold an executive title or have operational decision-making authority; a Co-Founder who is solely a shareholder, advisor, or holds a non-executive or honorary role is not considered executive management.",
               "The company is for-profit.",
               "The individual participates in clinical research involving the company’s technology.",
               "The individual receives sponsored research funding from the company.",
