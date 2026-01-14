@@ -10,11 +10,14 @@ QUESTIONS_DATA = {
       "yes_no_values": ["Yes", "No"],
       "rules_reference_instruction": "For questions 13, 14, and 15, perform a deep legal analysis using ONLY the rules defined in REFERENCE_POLICIES. Do not hallucinate."
     },
+"assumptions": [
+  "Scientific advisory board positions do NOT count as executive management positions.",
+  "A Co-Founder is considered an executive management position only if they hold an executive title or have operational decision-making authority.",
+  "A Co-Founder who is solely a shareholder, advisor, or holds a non-executive or honorary role is NOT considered executive management.",
+  "The Executive Position Rule (A3) applies only if the researcher holds or seeks an executive role with material responsibilities."
+]
 
-    "assumptions": [
-      "Scientific advisory board positions do NOT count as executive management positions.",
-      "A Co-Founder is considered an executive management position only if they hold an executive title or have operational decision-making authority; a Co-Founder who is solely a shareholder, advisor, or holds a non-executive or honorary role is not considered executive management.",
-    ],
+,
 
     "QUESTIONS": [
       {
@@ -80,13 +83,14 @@ QUESTIONS_DATA = {
       {
   "id": 13,
   "text": "What COI policy applies to this management plan?",
-  "prompt": "Perform a DEEP LEGAL ANALYSIS using ONLY REFERENCE_POLICIES. Before beginning the analysis, review the stated assumptions and the raw input. Follow these steps STRICTLY and in order:\n\nSTEP 1: Determine from the raw data whether the researcher is an INVENTOR or CO-INVENTOR of any intellectual property that is licensed, proposed to be licensed, or otherwise transferred to the company. IMPORTANT: Co-founder or company affiliation status alone does NOT imply inventor or co-inventor status unless explicitly stated in the raw data.\n\nSTEP 2: IF the researcher IS an inventor or co-inventor, immediately evaluate the applicability of the 'Inventor_Equity_and_Licensing_Conflict_Policy'.\n\nSTEP 3: COMPLIANCE CHECK — Assess whether ALL required conditions of the 'Inventor_Equity_and_Licensing_Conflict_Policy' are fully satisfied based on the facts provided.\n\nSTEP 4: DECISION LOGIC:\n- If ALL conditions are satisfied, output ONLY: 'Inventor_Equity_and_Licensing_Conflict_Policy' and STOP.\n- If ANY condition is NOT satisfied, OR if the researcher is NOT an inventor or co-inventor, proceed to evaluate HMS_COI_Policy, PHS_COI_Policy, and BCH_COI_Policy.\n\nSTEP 5: Select and output ONLY ONE policy — the single most appropriate policy based on the facts. Do NOT include explanations, reasoning, or multiple outputs."
+  "prompt": "Perform a DEEP LEGAL ANALYSIS using ONLY REFERENCE_POLICIES. Before beginning the analysis, review the stated assumptions and the raw input. Follow these steps STRICTLY and in order:\n\nSTEP 1: Determine from the raw data whether the researcher is an INVENTOR or CO-INVENTOR of any intellectual property that is licensed, proposed to be licensed, or otherwise transferred to the company. \n- IMPORTANT: Do NOT assume that co-founder, company founder, or company advisor status implies an executive position or inventor status unless explicitly stated in the raw data.\n\nSTEP 2: IF the researcher IS an inventor or co-inventor, immediately evaluate the applicability of the 'Inventor_Equity_and_Licensing_Conflict_Policy'.\n\nSTEP 3: COMPLIANCE CHECK — Assess whether ALL required conditions of the 'Inventor_Equity_and_Licensing_Conflict_Policy' are fully satisfied based on the facts provided.\n\nSTEP 4: DECISION LOGIC:\n- If ALL conditions are satisfied, output ONLY: 'Inventor_Equity_and_Licensing_Conflict_Policy' and STOP.\n- If ANY condition is NOT satisfied, OR if the researcher is NOT an inventor or co-inventor, proceed to evaluate HMS_COI_Policy, PHS_COI_Policy, and BCH_COI_Policy.\n\nSTEP 5: Select and output ONLY ONE policy — the single most appropriate policy based on the facts. Do NOT assume executive position, co-founder authority, or management control unless explicitly stated. Do NOT include explanations, reasoning, or multiple outputs."
 }
+
 ,
       {
         "id": 14,
         "text": "What COI rule applies to this management plan?",
-        "prompt": "Perform a DEEP RULE-BY-RULE ANALYSIS. 1. If Question 13 is 'NA', return 'NA'. 2. Retrieve the Policy Name from Question 13 and look it up in REFERENCE_POLICIES. 3. Evaluate ALL Rules provided under that Policy. 4. Select the SINGLE Rule that has the MAXIMUM matched conditions. 5. Output ONLY the EXACT value of the 'Name' field from the matched rule object in REFERENCE_POLICIES. Do NOT return multiple rules. Do NOT return lists. If the Policy is a single object (not a list), return its Name from rule section."
+        "prompt": "Perform a DEEP RULE-BY-RULE ANALYSIS. 1. If Question 13 is 'NA', return 'NA'. 2. Retrieve the Policy Name from Question 13 and look it up in REFERENCE_POLICIES. 3. Evaluate ALL Rules provided under that Policy. 4. Select the SINGLE Rule that has the exact matched conditions without any partial match. 5. Output ONLY the EXACT value of the 'Name' field from the matched rule object in REFERENCE_POLICIES. Do NOT return multiple rules. Do NOT return lists. If the Policy is a single object (not a list), return its Name from rule section."
       },
       {
         "id": 15,
@@ -122,6 +126,7 @@ QUESTIONS_DATA = {
             "Name": "Executive Position Rule (formerly the “1(c) Rule”)",
             "Rule": [
               "The individual holds or seeks to hold an executive role within the company, Must think asumptions in the top and decide the answer (e.g., CEO, COO, CSO, CMO, or another role with material responsibility for company operations or management excpet Only Co-Founder not considered as Executive). Most importantly, scientific advisory board positions do not count as executive management positions.A Co-Founder is considered an executive management position only if they hold an executive title or have operational decision-making authority; a Co-Founder who is solely a shareholder, advisor, or holds a non-executive or honorary role is not considered executive management.",
+              "Note: Only consider executive position if explicitly stated. Co-Founders without executive title or authority, and advisory board members, are NOT executive.",
               "The company is for-profit.",
               "The individual participates in clinical research involving the company’s technology.",
               "The individual receives sponsored research funding from the company.",
