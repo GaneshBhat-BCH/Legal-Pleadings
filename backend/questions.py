@@ -78,10 +78,11 @@ QUESTIONS_DATA = {
         "prompt": "Extract the data from the input and determine whether the company seeks to sponsor research at BCH. Output Yes or No. If not mentioned, return NA."
       },
       {
-        "id": 13,
-        "text": "What COI policy applies to this management plan?",
-        "prompt": "Perform a DEEP LEGAL ANALYSIS using ONLY REFERENCE_POLICIES before starting the analysis consider assumptions in the top and decide the answer. Review the raw input and also answers from Questions 1–12. follow strictly these steps: STEP 1: Check if the researcher is an inventor or co-inventor from raw data. STEP 2: IF YES, immediately evaluate the 'Inventor_Equity_and_Licensing_Conflict_Policy'. STEP 3: MEASURE COMPLIANCE: Does the situation matches ALL conditions of that specific policy? STEP 4: DECISION -> If it matches ALL conditions, return 'Inventor_Equity_and_Licensing_Conflict_Policy' and STOP. -> If it does NOT match all conditions (or if researcher is not an inventor), proceed to evaluate HMS_COI_Policy, PHS_COI_Policy, or BCH_COI_Policy and return the best match. Output ONLY one value."
-      },
+  "id": 13,
+  "text": "What COI policy applies to this management plan?",
+  "prompt": "Perform a DEEP LEGAL ANALYSIS using ONLY REFERENCE_POLICIES. Before beginning the analysis, review the stated assumptions and the raw input. Follow these steps STRICTLY and in order:\n\nSTEP 1: Determine from the raw data whether the researcher is an INVENTOR or CO-INVENTOR of any intellectual property that is licensed, proposed to be licensed, or otherwise transferred to the company. IMPORTANT: Co-founder or company affiliation status alone does NOT imply inventor or co-inventor status unless explicitly stated in the raw data.\n\nSTEP 2: IF the researcher IS an inventor or co-inventor, immediately evaluate the applicability of the 'Inventor_Equity_and_Licensing_Conflict_Policy'.\n\nSTEP 3: COMPLIANCE CHECK — Assess whether ALL required conditions of the 'Inventor_Equity_and_Licensing_Conflict_Policy' are fully satisfied based on the facts provided.\n\nSTEP 4: DECISION LOGIC:\n- If ALL conditions are satisfied, output ONLY: 'Inventor_Equity_and_Licensing_Conflict_Policy' and STOP.\n- If ANY condition is NOT satisfied, OR if the researcher is NOT an inventor or co-inventor, proceed to evaluate HMS_COI_Policy, PHS_COI_Policy, and BCH_COI_Policy.\n\nSTEP 5: Select and output ONLY ONE policy — the single most appropriate policy based on the facts. Do NOT include explanations, reasoning, or multiple outputs."
+}
+,
       {
         "id": 14,
         "text": "What COI rule applies to this management plan?",
