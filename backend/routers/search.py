@@ -148,9 +148,10 @@ async def search_documents(request: SearchRequest, db = Depends(get_db)):
         JOIN coi_mgmt.pdf_documents pdf ON c.pdf_id = pdf.pdf_id
         WHERE c.search_vector @@ plainto_tsquery('english', :query_text)
         GROUP BY pdf.file_name, pdf.pdf_id
-        ORDER BY max_rank DESC LIMIT 50
+        ORDER BY max_rank DESC LIMIT 200
         """
         results_kw = await db.fetch_all(keyword_search_query, values={"query_text": query_text})
+        log_event("Search Module", f"Step 1 Raw Results: Found {len(results_kw)} rows via SQL.", "DEBUG")
         candidates = await get_verified_candidates(results_kw, source_label="SQL Keyword")
         search_method = "SQL Keyword (Free)"
 
