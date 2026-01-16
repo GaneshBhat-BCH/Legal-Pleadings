@@ -70,27 +70,48 @@ async def search_documents(request: SearchRequest, db = Depends(get_db)):
                     if found_answer and found_answer != "N/A":
                         user_ref = item.get("answer_text") or item.get("answer") or ""
                         
-                        # STRICT MATCHING LOGIC (RELAXED NORMALIZATION)
+                        # MATCHING LOGIC: Tiered Approach
+                        # 1. Normalize
                         def normalize_for_match(text):
                             import re
-                            # Lowercase
                             text = text.lower()
-                            # Remove spaces, commas, hyphens, slashes
-                            # Keep alphanumeric and logical symbols like <, >, =
                             text = re.sub(r'[\s,\-/]', '', text) 
                             return text
 
                         norm_user = normalize_for_match(user_ref)
                         norm_pdf = normalize_for_match(found_answer)
                         
+                        score_mult = 0.0
+                        status_msg = "Mismatch"
+
+                        # 2. Check 1: Strict Normalized Match
                         if norm_user == norm_pdf:
-                            is_match = True
-                            status_msg = "Match"
-                            matches.append({"question": q_text, "pdf_answer": found_answer, "user_answer_ref": user_ref})
-                            current_weighted_score += weight
+                            score_mult = 1.0
+                            status_msg = "Match (Exact)"
                         else:
-                            is_match = False
-                            status_msg = "Mismatch"
+                            # 3. Check 2: Fuzzy Match (> 95%)
+                            from difflib import SequenceMatcher
+                            similarity = SequenceMatcher(None, norm_user, norm_pdf).ratio()
+                            if similarity >= 0.95:
+                                score_mult = 1.0
+                                status_msg = f"Match (Fuzzy {similarity:.0%})"
+                            else:
+                                # 4. Check 3: Token Partial Overlap
+                                import re
+                                user_tokens = set(re.split(r'[\s,\-/]+', user_ref.lower()))
+                                pdf_tokens = set(re.split(r'[\s,\-/]+', found_answer.lower()))
+                                user_tokens = {t for t in user_tokens if t}
+                                pdf_tokens = {t for t in pdf_tokens if t}
+                                
+                                common = user_tokens.intersection(pdf_tokens)
+                                if common:
+                                    score_mult = 0.5
+                                    status_msg = f"Partial Match (Overlap: {len(common)} tokens)"
+
+                        if score_mult > 0:
+                            matches.append({"question": q_text, "pdf_answer": found_answer, "user_answer_ref": user_ref, "match_type": status_msg})
+                            current_weighted_score += (weight * score_mult)
+                        else:
                             non_matches.append({"question": q_text, "pdf_answer": found_answer, "user_answer_ref": user_ref, "status": status_msg})
                     else:
                         non_matches.append({"question": q_text, "status": "Not Found in this PDF"})
