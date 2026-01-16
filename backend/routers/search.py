@@ -70,10 +70,18 @@ async def search_documents(request: SearchRequest, db = Depends(get_db)):
                     if found_answer and found_answer != "N/A":
                         user_ref = item.get("answer_text") or item.get("answer") or ""
                         
-                        # STRICT MATCHING LOGIC
-                        # Normalize strings: lowercase and strip whitespace
-                        norm_user = user_ref.strip().lower()
-                        norm_pdf = found_answer.strip().lower()
+                        # STRICT MATCHING LOGIC (RELAXED NORMALIZATION)
+                        def normalize_for_match(text):
+                            import re
+                            # Lowercase
+                            text = text.lower()
+                            # Remove spaces, commas, hyphens, slashes
+                            # Keep alphanumeric and logical symbols like <, >, =
+                            text = re.sub(r'[\s,\-/]', '', text) 
+                            return text
+
+                        norm_user = normalize_for_match(user_ref)
+                        norm_pdf = normalize_for_match(found_answer)
                         
                         if norm_user == norm_pdf:
                             is_match = True
