@@ -21,13 +21,12 @@ CREATE TABLE IF NOT EXISTS coi_mgmt.pdf_answers (
 );
 
 CREATE TABLE IF NOT EXISTS coi_mgmt.user_queries (
-    query_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id TEXT NOT NULL,
-    question_id INT NOT NULL,
-    question_text TEXT NOT NULL,
-    user_answer TEXT,
-    user_embedding VECTOR(1536),
-    created_at TIMESTAMP DEFAULT NOW()
+    query_id BIGSERIAL PRIMARY KEY,
+    user_id TEXT,
+    input_json JSONB,
+    agent_answer JSONB,
+    query_type JSONB,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS coi_mgmt.pdf_chunks (
