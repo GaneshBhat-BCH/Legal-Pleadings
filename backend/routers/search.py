@@ -171,6 +171,20 @@ async def search_documents(request: SearchRequest, db = Depends(get_db)):
                 "matched_qa": c["matched_qa"],
                 "unmatched_qa": c["unmatched_qa"]
              })
+        
+        # 4. FEEDBACK: Ensure we return exactly top 3 (or placeholders)
+        current_count = len(formatted_results)
+        if current_count < 3:
+            for i in range(current_count + 1, 4): # e.g. if count 1, range(2,4) -> 2, 3
+                formatted_results.append({
+                    "pdf_name": "No Data Found",
+                    "match_score": "0%",
+                    "search_method": search_method,
+                    "relevance_details": {},
+                    "matched_qa": [],
+                    "unmatched_qa": [],
+                     "feedback_message": f"We don't have PDF {i} data currently matched with the criteria."
+                })
             
         return {
             "search_method_used": search_method,
