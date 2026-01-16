@@ -4,8 +4,8 @@ from dotenv import load_dotenv
 
 from pathlib import Path
 
-# Load .env from the same directory as this file
-env_path = Path(__file__).parent / ".env"
+# Load .env from the project root (parent of backend)
+env_path = Path(__file__).parent.parent / ".env"
 load_dotenv(dotenv_path=env_path)
 
 DB_USER = os.getenv("DB_USER")
