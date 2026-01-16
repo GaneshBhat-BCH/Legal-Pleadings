@@ -105,7 +105,7 @@ async def search_documents(request: SearchRequest, db = Depends(get_db)):
                                 
                                 common = user_tokens.intersection(pdf_tokens)
                                 if common:
-                                    score_mult = 0.5
+                                    score_mult = 0.8
                                     status_msg = f"Partial Match (Overlap: {len(common)} tokens)"
 
                         if score_mult > 0:
