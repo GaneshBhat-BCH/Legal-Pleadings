@@ -32,7 +32,7 @@ async def search_documents(request: SearchRequest, db = Depends(get_db)):
         # ... (logic remains) ...
         
         # Helper: Process a list of DB rows into Verified Forensic Candidates
-        async def get_verified_candidates(db_rows):
+        async def get_verified_candidates(db_rows, source_label="Unknown"):
             processed_candidates = []
             
             # Weighted Scoring Configuration
@@ -106,7 +106,8 @@ async def search_documents(request: SearchRequest, db = Depends(get_db)):
                     "matched_qa": matches,
                     "unmatched_qa": non_matches,
                     "valid_match_count": len(matches),
-                    "weighted_details": f"Score: {current_weighted_score}/{total_possible_weight}"
+                    "weighted_details": f"Score: {current_weighted_score}/{total_possible_weight}",
+                    "source_label": source_label 
                 })
             
             # Filter by Threshold (>= 80%)
@@ -129,7 +130,7 @@ async def search_documents(request: SearchRequest, db = Depends(get_db)):
         ORDER BY max_rank DESC LIMIT 10
         """
         results_kw = await db.fetch_all(keyword_search_query, values={"query_text": query_text})
-        candidates = await get_verified_candidates(results_kw)
+        candidates = await get_verified_candidates(results_kw, source_label="SQL Keyword")
         search_method = "SQL Keyword (Free)"
 
         # 3. STEP 2: FALLBACK TO VECTOR SEARCH
@@ -163,20 +164,23 @@ async def search_documents(request: SearchRequest, db = Depends(get_db)):
             
             if new_results_vec:
                 log_event("Search Module", f"Vector search found {len(new_results_vec)} NEW raw candidates.", "PROGRESS")
-                vector_candidates = await get_verified_candidates(new_results_vec)
+                vector_candidates = await get_verified_candidates(new_results_vec, source_label="Vector Search")
                 candidates.extend(vector_candidates)
             
             log_event("Search Module", f"Verification complete. Final combined count: {len(candidates)} unique PDFs.", "SUCCESS")
         else:
             log_event("Search Module", f"Keyword search found {len(candidates)} verified PDFs. Skipping Vectorization.", "SUCCESS")
         
+        # Sort combined results again to ensure Vector matches can beat Keyword matches if score is higher
+        candidates.sort(key=lambda x: x["match_score_raw"], reverse=True)
+
         final_results = candidates[:3]
         formatted_results = []
         for c in final_results:
              formatted_results.append({
                 "pdf_name": c["pdf_name"],
                 "match_score": f"{c['match_score_raw'] * 100:.1f}%",
-                "search_method": search_method,
+                "search_method": c.get("source_label", search_method), # Use individual source label
                 "relevance_details": c["relevance_details"],
                 "matched_qa": c["matched_qa"],
                 "unmatched_qa": c["unmatched_qa"]
