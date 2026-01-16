@@ -9,11 +9,35 @@ router = APIRouter()
 
 class SearchRequest(BaseModel):
     questions_answers: list[dict]
+    user_id: str = "anonymous_user"
 
 @router.post("/search")
 async def search_documents(request: SearchRequest, db = Depends(get_db)):
     log_event("Search Module", "Search request received", "START")
     try:
+        # 0. LOGGING: Persist user queries to DB
+        if request.questions_answers:
+            try:
+                for item in request.questions_answers:
+                    q_text = item.get("question_text") or item.get("question") or item.get("text") or ""
+                    a_text = item.get("answer_text") or item.get("answer") or ""
+                    q_id = int(item.get("question_id")) if item.get("question_id") and str(item.get("question_id")).isdigit() else 0
+                    
+                    insert_query = """
+                        INSERT INTO coi_mgmt.user_queries (user_id, question_id, question_text, user_answer)
+                        VALUES (:user_id, :question_id, :question_text, :user_answer)
+                    """
+                    await db.execute(insert_query, values={
+                        "user_id": request.user_id,
+                        "question_id": q_id,
+                        "question_text": q_text,
+                        "user_answer": a_text
+                    })
+                log_event("Search Module", f"Logged {len(request.questions_answers)} queries for user {request.user_id}", "INFO")
+            except Exception as log_err:
+                log_event("Search Module", f"Failed to log user queries: {log_err}", "WARNING")
+                # Do not block the search if logging fails
+
         # 1. Prepare Query
         # Combine Q&A into text for Embedding AND Keyword search
         query_text = ""
