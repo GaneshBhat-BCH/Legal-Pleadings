@@ -142,15 +142,39 @@ async def search_documents(request: SearchRequest, db = Depends(get_db)):
 
         # 2. STEP 1: PURE KEYWORD SEARCH (No Model Cost)
         log_event("Search Module", "Attempting Keyword-First search...", "PROGRESS")
+        
+        # Construct OR-based TSQuery (match ANY term) to avoid strict AND failure
+        # e.g. "Researcher Role Company" -> "Researcher | Role | Company"
+        import re
+        clean_tokens = re.findall(r'\w+', query_text)
+        if clean_tokens:
+            query_or = " | ".join(clean_tokens)
+        else:
+            query_or = query_text # Fallback
+
         keyword_search_query = """
-        SELECT pdf.file_name, pdf.pdf_id, 0 as max_sim, MAX(ts_rank(c.search_vector, plainto_tsquery('english', :query_text))) as max_rank
+        SELECT pdf.file_name, pdf.pdf_id, 0 as max_sim, MAX(ts_rank(c.search_vector, to_tsquery('english', :query_or))) as max_rank
         FROM coi_mgmt.pdf_chunks c
         JOIN coi_mgmt.pdf_documents pdf ON c.pdf_id = pdf.pdf_id
-        WHERE c.search_vector @@ plainto_tsquery('english', :query_text)
+        WHERE c.search_vector @@ to_tsquery('english', :query_or)
         GROUP BY pdf.file_name, pdf.pdf_id
         ORDER BY max_rank DESC LIMIT 200
         """
-        results_kw = await db.fetch_all(keyword_search_query, values={"query_text": query_text})
+        try:
+            results_kw = await db.fetch_all(keyword_search_query, values={"query_or": query_or})
+        except Exception as sql_err:
+             # Fallback to plainto_tsquery if OR syntax fails (rare)
+             log_event("Search Module", f"OR-query failed ({sql_err}), retrying with strict...", "WARNING")
+             query_strict = """
+             SELECT pdf.file_name, pdf.pdf_id, 0 as max_sim, MAX(ts_rank(c.search_vector, plainto_tsquery('english', :query_text))) as max_rank
+             FROM coi_mgmt.pdf_chunks c
+             JOIN coi_mgmt.pdf_documents pdf ON c.pdf_id = pdf.pdf_id
+             WHERE c.search_vector @@ plainto_tsquery('english', :query_text)
+             GROUP BY pdf.file_name, pdf.pdf_id
+             ORDER BY max_rank DESC LIMIT 200
+             """
+             results_kw = await db.fetch_all(query_strict, values={"query_text": query_text})
+
         log_event("Search Module", f"Step 1 Raw Results: Found {len(results_kw)} rows via SQL.", "DEBUG")
         candidates = await get_verified_candidates(results_kw, source_label="SQL Keyword")
         search_method = "SQL Keyword (Free)"
