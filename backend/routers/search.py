@@ -2,10 +2,15 @@ from fastapi import APIRouter, HTTPException, Depends
 from backend.database import get_db
 from backend.services.ai import get_embeddings
 from backend.utils.logger import log_event
+from backend.utils.html_templates import generate_search_results_html
+from backend.questions import QUESTIONS
 from pydantic import BaseModel
 import json
 
 router = APIRouter()
+
+# Precompute Question Text to ID Mapping
+QUESTION_TEXT_TO_ID = { q["text"].lower().strip(): str(q["id"]) for q in QUESTIONS }
 
 class SearchRequest(BaseModel):
     questions_answers: list[dict]
@@ -58,7 +63,11 @@ async def search_documents(request: SearchRequest, db = Depends(get_db)):
                 
                 for item in request.questions_answers:
                     q_text = item.get("question_text") or item.get("question") or item.get("text") or "Unknown Question"
+                    
+                    # Try to get ID from request, if missing, lookup by text
                     q_id = str(item.get("question_id", ""))
+                    if not q_id or q_id == "None":
+                         q_id = QUESTION_TEXT_TO_ID.get(q_text.lower().strip(), "")
                     
                     # Determine Weight
                     weight = HIGH_WEIGHT_VAL if q_id in HIGH_WEIGHT_IDS else NORMAL_WEIGHT_VAL
@@ -285,9 +294,13 @@ async def search_documents(request: SearchRequest, db = Depends(get_db)):
         except Exception as log_err:
             log_event("Search Module", f"Failed to log session: {log_err}", "WARNING")
 
+        # Generate HTML Email Body
+        email_html = generate_search_results_html(formatted_results, search_method)
+
         return {
             "search_method_used": search_method,
-            "results": formatted_results
+            "results": formatted_results,
+            "email_body": email_html
         }
 
     except Exception as e:
