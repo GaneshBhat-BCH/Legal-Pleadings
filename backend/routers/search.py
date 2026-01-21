@@ -109,12 +109,31 @@ async def search_documents(request: SearchRequest, db = Depends(get_db)):
                                     status_msg = f"Partial Match (Overlap: {len(common)} tokens)"
 
                         if score_mult > 0:
-                            matches.append({"question": q_text, "pdf_answer": found_answer, "user_answer_ref": user_ref, "match_type": status_msg})
+                            matches.append({
+                                "question": q_text, 
+                                "pdf_answer": found_answer, 
+                                "user_answer_ref": user_ref, 
+                                "match_type": status_msg,
+                                "weight": weight,
+                                "score_earned": (weight * score_mult)
+                            })
                             current_weighted_score += (weight * score_mult)
                         else:
-                            non_matches.append({"question": q_text, "pdf_answer": found_answer, "user_answer_ref": user_ref, "status": status_msg})
+                            non_matches.append({
+                                "question": q_text, 
+                                "pdf_answer": found_answer, 
+                                "user_answer_ref": user_ref, 
+                                "status": status_msg,
+                                "weight": weight,
+                                "score_earned": 0.0
+                            })
                     else:
-                        non_matches.append({"question": q_text, "status": "Not Found in this PDF"})
+                        non_matches.append({
+                            "question": q_text, 
+                            "status": "Not Found in this PDF",
+                            "weight": weight,
+                            "score_earned": 0.0
+                        })
 
                 # Calculate Weighted Percentage
                 score_ratio = (current_weighted_score / total_possible_weight) if total_possible_weight > 0 else 0.0
