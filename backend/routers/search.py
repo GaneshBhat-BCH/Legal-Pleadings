@@ -225,6 +225,7 @@ async def search_documents(request: SearchRequest, db = Depends(get_db)):
         for c in final_results:
              formatted_results.append({
                 "pdf_name": c["pdf_name"],
+                "weightage_details": c["weighted_details"],
                 "match_score": f"{c['match_score_raw'] * 100:.1f}%",
                 "search_method": c.get("source_label", search_method), # Use individual source label
                 "relevance_details": c["relevance_details"],
