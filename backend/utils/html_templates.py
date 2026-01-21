@@ -135,4 +135,7 @@ def generate_search_results_html(results, search_method):
     </html>
     """)
     
-    return "".join(html_parts)
+    
+    # Minify the HTML by stripping whitespace and joining one line
+    full_html = "".join(html_parts)
+    return " ".join(full_html.split())
