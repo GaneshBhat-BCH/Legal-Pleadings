@@ -36,10 +36,10 @@ async def search_documents(request: SearchRequest, db = Depends(get_db)):
             processed_candidates = []
             
             # Weighted Scoring Configuration
-            # Q1-Q12: 80 points, Q13-Q15: 100 points
-            HIGH_WEIGHT_IDS = {"13", "14", "15"}
-            HIGH_WEIGHT_VAL = 100.0
-            NORMAL_WEIGHT_VAL = 80.0
+            # Q1 (Cofounder), Q13 (Policy), Q14 (Rule), Q15 (Exemption) → High Weight
+            HIGH_WEIGHT_IDS = {"1", "13", "14", "15"}
+            HIGH_WEIGHT_VAL = 3.0
+            NORMAL_WEIGHT_VAL = 1.0
             THRESHOLD_PERCENT = 0.80  # 80% match requirement
 
             for row in db_rows:
@@ -225,7 +225,6 @@ async def search_documents(request: SearchRequest, db = Depends(get_db)):
         for c in final_results:
              formatted_results.append({
                 "pdf_name": c["pdf_name"],
-                "weightage_details": c["weighted_details"],
                 "match_score": f"{c['match_score_raw'] * 100:.1f}%",
                 "search_method": c.get("source_label", search_method), # Use individual source label
                 "relevance_details": c["relevance_details"],
