@@ -35,11 +35,8 @@ def generate_search_results_html(results, search_method):
             <div class="header">
                 <h2>COI Analysis Verification Report</h2>
             </div>
-            <div class="meta">
-                <strong>Analysis Method:</strong> """ + search_method + """<br>
-                <strong>Generated:</strong> """ + "Just now" + """
-            </div>
     """]
+
 
     for res in results:
         # Check if result is a placeholder
