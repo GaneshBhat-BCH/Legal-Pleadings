@@ -3,11 +3,21 @@
 ## 1. Executive Summary
 The **Legal Pleadings RAG & Processing Engine** is an intelligent automation solution designed to process complex legal documents (such as charge allegations) and automatically generate structured, formal, and legally sound Position Statements. It achieves this by combining strict AI-driven data extraction with an advanced Retrieval-Augmented Generation (RAG) architecture.
 
-## 2. Process Overview (To-Be Automated Workflow)
-1. **Data Ingestion (Phase 1):** Historical legal policies and documents are ingested into a PostgreSQL `pgvector` database to establish a knowledge base.
-2. **Extraction via Code Interpreter (Phase 2):** An incoming PDF complaint is sent to the system. Using Azure OpenAI's Code Interpreter, the Engine performs a strict, verbatim extraction of actionable allegations alongside document metadata. It outputs pure, minified JSON.
-3. **Human-in-the-Loop Approval (Co-Pilot):** A human reviewer (often interacting via an RPA Co-Pilot interface) reviews the structured allegations extracted by the AI, provides necessary context or rebuttals to the claims, and approves the data for final drafting.
-4. **Drafting via Contextual RAG (Phase 3):** The Co-Pilot submits the approved context/rebuttals to the Backend. The system queries the `pgvector` database for relevant legal rules, passes everything to a formal drafting LLM prompt, and saves a beautifully formatted `.docx` Position Statement directly to the local machine.
+## 2. Process Overview (End-to-End Workflow)
+
+The automated system is divided into three distinct phases to ensure strict knowledge control and human oversight:
+
+### Phase 1: Knowledge Base Ingestion (RAG Pipeline Setup)
+Before any claims are processed, the system requires a foundation of legal knowledge. Historical company policies, state laws, and relevant employment guidelines are ingested into the backend. These documents are chunked, vectorized using OpenAI embeddings, and securely stored in a High-Dimensional PostgreSQL `pgvector` database to enable Semantic Search.
+
+### Phase 2: Intelligent Extraction
+An incoming PDF complaint is sent to the system. Using Azure OpenAI's Code Interpreter, the Engine performs a strict, verbatim extraction of actionable allegations alongside document metadata. It outputs pure, minified JSON.
+
+### Phase 2.5: Human-in-the-Loop Validation
+A human reviewer (often interacting via an RPA Co-Pilot interface) reviews the structured allegations extracted by the AI, provides necessary context or rebuttals to the claims, and approves the data for final drafting.
+
+### Phase 3: User Query & Contextual Drafting (Position Statement)
+The Co-Pilot submits the approved context/rebuttals to the Backend as the "User Query." The system executes a Semantic RAG Search against the Phase 1 `pgvector` database to retrieve highly relevant legal rules. The exact user rebuttals and the retrieved legal context are passed to a formal drafting LLM prompt. Finally, the system saves a beautifully formatted `.docx` Position Statement directly to the local machine.
 
 ## 3. High-Level System Architecture
 
@@ -62,38 +72,88 @@ graph LR
     style Services fill:#ffffff,stroke:#cccccc,stroke-dasharray: 5 5
 ```
 
-## 4. Sequence Workflow Diagram
+## 4. Sequence Workflow Diagrams
+
+To maximize clarity, the end-to-end workflow is divided into four distinct phases, each with its own sequence diagram:
+
+### A. Phase 1: Knowledge Base Ingestion (RAG Setup)
+This phase illustrates how the system builds its legal knowledge base before any user interaction occurs.
+
+```mermaid
+sequenceDiagram
+    participant Admin as System Admin
+    participant API as FastAPI Backend
+    participant AOAI as Azure OpenAI
+    participant DB as PGVector DB
+
+    Note over API, DB: Phase 1 - RAG Pipeline Setup (Ingestion)
+    Admin->>API: Upload Company Policies & Historical Data
+    API->>AOAI: Generate Embeddings for Text Chunks
+    AOAI-->>API: Return Vector Embeddings
+    API->>DB: Store Document Text + High-Dimensional Vectors
+    DB-->>API: Confirm Storage
+    API-->>Admin: "Knowledge Base Updated"
+```
+
+### B. Phase 2: Intelligent Extraction (Code Interpreter)
+This phase covers the strict parsing of an incoming PDF complaint into validated JSON data.
 
 ```mermaid
 sequenceDiagram
     participant RPA as RPA Bot
-    participant Human as Human (Co-Pilot)
     participant API as FastAPI Backend
     participant AOAI as Azure OpenAI
-    participant DB as PGVector DB
-    participant OS as Local Filesystem
 
     Note over RPA, AOAI: Phase 2 - Intelligent Extraction
     RPA->>API: POST /api/v1/extraction/extract (file_path)
-    API->>AOAI: Upload PDF File
-    AOAI-->>API: Returns File ID
-    API->>AOAI: Trigger Code Interpreter with Strict JSON Prompt
-    AOAI-->>API: Extracts minified JSON Response
-    API-->>RPA: Validated JSON payload returned
+    API->>AOAI: Upload PDF Document
+    AOAI-->>API: Returns secure File ID
+    API->>AOAI: Trigger Code Interpreter with Strict Extraction Prompt
+    AOAI-->>API: Extracted minified JSON payload
+    API-->>RPA: Return Validated JSON Data
+```
+
+### C. Phase 3: Human-in-the-Loop Validation (Co-Pilot)
+This phase represents the crucial point where human experts review and augment the AI's findings.
+
+```mermaid
+sequenceDiagram
+    participant RPA as RPA Bot / Co-Pilot UI
+    participant Human as Human Legal Expert
+
+    Note over RPA, Human: Phase 3 - Validation & Strategy
+    RPA->>Human: Present extracted allegations & AI mappings
+    Human-->>RPA: Review accuracy of Legal Theories
+    Human-->>RPA: Add Defendant Rebuttals (LNDR) & Context
+    Human->>RPA: Approve Final Data Payload for Drafting
+```
+
+### D. Phase 4: User Query & Document Generation (RAG Drafting)
+This final phase takes the approved data, queries the database for legal precedent, and drafts the actual Word document.
+
+```mermaid
+sequenceDiagram
+    participant RPA as RPA Bot
+    participant API as FastAPI Backend
+    participant DB as PGVector DB
+    participant AOAI as Azure OpenAI
+    participant OS as Local Filesystem
     
-    Note over RPA, Human: Human-in-the-Loop Validation
-    RPA->>Human: Present extracted allegations via Co-Pilot UI
-    Human-->>RPA: Review, Edit, & Add Rebuttals
-    Human->>RPA: Approve Data for Drafting
+    Note over RPA, OS: Phase 4 - Position Statement Generation
+    RPA->>API: POST /api/v1/generation/generate_statement (JSON + Rebuttals)
     
-    Note over RPA, OS: Phase 3 - Document Generation
-    RPA->>API: POST /api/v1/generation/generate_statement (JSON + User Responses)
-    API->>DB: Perform Similarity Search (RAG)
-    DB-->>API: Top K Relevant Legal Documents
-    API->>AOAI: Generate Draft (Context + User Replies)
-    AOAI-->>API: Formal Position Statement Text
-    API->>OS: Compile & Save .docx to ~/Downloads/
-    API-->>RPA: "Status: Success"
+    Note over API, DB: Semantic Retrieval (RAG)
+    API->>DB: Perform Similarity Search using Allegation text
+    DB-->>API: Return Top K Relevant Legal Documents (from Phase 1)
+    
+    Note over API, AOAI: AI Formal Drafting
+    API->>AOAI: Generate Draft (RAG Context + User Rebuttals + Prompt)
+    AOAI-->>API: Return Formal Position Statement Text
+    
+    Note over API, OS: Output Finalization
+    API->>OS: Compile Word Document (.docx format)
+    API->>OS: Save file to ~/Downloads/ directory
+    API-->>RPA: Return "Status: Success & File Path"
 ```
 
 ## 5. Technical Specifications
