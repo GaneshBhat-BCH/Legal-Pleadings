@@ -12,43 +12,54 @@ The **Legal Pleadings RAG & Processing Engine** is an intelligent automation sol
 ## 3. High-Level System Architecture
 
 ```mermaid
-graph TD
-    %% Main Entities
-    User[RPA Bot / Automator]
-    Human[Human-in-the-Loop / Co-Pilot]
-    FastAPI[FastAPI Backend Engine]
-    Postgres[(PostgreSQL + pgvector)]
-    AzureOpenAI[Azure OpenAI Services]
-    WordDoc[Word Docx Generator]
+graph LR
+    subgraph Client [Client Application]
+        direction TB
+        RPA[RPA Automator Bot]
+        CoPilot[Human Reviewer / Co-Pilot]
+    end
 
-    %% Flow
-    User -->|1. Uploads PDF| FastAPI
-    FastAPI -->|2. Extracts Entities & Claims via Code Interpreter| AzureOpenAI
-    AzureOpenAI -.->|3. Returns Minified JSON| FastAPI
-    FastAPI -.->|4. Returns Extracted JSON| User
-    
-    User -->|5. Presents Data for Review| Human
-    Human -->|6. Approves Data & Adds Rebuttals| User
-    
-    User -->|7. Submits Draft Request + Rebuttals| FastAPI
-    FastAPI -->|8. Performs Semantic RAG Search| Postgres
-    Postgres -.->|9. Returns Legal Cites| FastAPI
-    FastAPI -->|10. Generates Position Statement| AzureOpenAI
-    AzureOpenAI -.->|11. Returns Formal Markdown/Text| FastAPI
-    FastAPI -->|12. Compiles Document| WordDoc
-    WordDoc -.->|13. Saves .docx to Downloads| User
+    subgraph Backend [API Engine]
+        direction TB
+        API[FastAPI Backend]
+        Compiler[Word Document Generator]
+    end
 
-    %% Styling
-    classDef client fill:#e1f5fe,stroke:#01579b,stroke-width:2px;
-    classDef server fill:#fff3e0,stroke:#e65100,stroke-width:2px;
-    classDef db fill:#e8f5e9,stroke:#1b5e20,stroke-width:2px;
-    classDef ai fill:#f3e5f5,stroke:#4a148c,stroke-width:2px;
+    subgraph Services [External AI & Data]
+        direction TB
+        Azure[Azure OpenAI]
+        DB[(PostgreSQL + pgvector)]
+    end
+
+    %% Workflow Connections
+    RPA -->|1. Upload PDF| API
+    API <-->|2. Strict Extraction| Azure
+    API -.->|3. Return JSON Data| RPA
     
-    class User client;
-    class Human fill:#fff9c4,stroke:#fbc02d,stroke-width:2px;
-    class FastAPI,WordDoc server;
-    class Postgres db;
-    class AzureOpenAI ai;
+    RPA <-->|4. Review & Add Rebuttals| CoPilot
+    
+    RPA -->|5. Submit Approved Data| API
+    API <-->|6. Semantic Search (RAG)| DB
+    API <-->|7. Formal Drafting| Azure
+    API -->|8. Compile Statement| Compiler
+    Compiler -.->|9. Return .docx File| RPA
+
+    %% Minimalistic Professional Styling
+    classDef client fill:#e1f5fe,stroke:#01579b,stroke-width:2px,color:#000
+    classDef human fill:#fff9c4,stroke:#fbc02d,stroke-width:2px,color:#000
+    classDef server fill:#fff3e0,stroke:#e65100,stroke-width:2px,color:#000
+    classDef ext fill:#f3e5f5,stroke:#4a148c,stroke-width:2px,color:#000
+    classDef db fill:#e8f5e9,stroke:#1b5e20,stroke-width:2px,color:#000
+
+    class RPA client
+    class CoPilot human
+    class API,Compiler server
+    class Azure ext
+    class DB db
+    
+    style Client fill:#ffffff,stroke:#cccccc,stroke-dasharray: 5 5
+    style Backend fill:#ffffff,stroke:#cccccc,stroke-dasharray: 5 5
+    style Services fill:#ffffff,stroke:#cccccc,stroke-dasharray: 5 5
 ```
 
 ## 4. Sequence Workflow Diagram
