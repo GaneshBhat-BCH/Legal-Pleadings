@@ -1,9 +1,9 @@
 @echo off
 cd /d "%~dp0"
-TITLE COI Management - One-Click Launcher
+TITLE Legal Pleadings Processing - One-Click Launcher
 
 echo ====================================================
-echo      COI MANAGEMENT MATCHING ENGINE
+echo      LEGAL PLEADINGS RAG ^& PROCESSING ENGINE
 echo ====================================================
 echo.
 echo Starting automated setup...
@@ -68,10 +68,13 @@ if "%INSTALL_DEPS%"=="1" (
 echo.
 
 REM Initialize database
-echo [4/5] Initializing Database...
+echo [4/5] Checking Database Initialization...
 call backend\venv\Scripts\activate.bat
-python backend\init_db.py
-echo Database ready
+if exist "backend\scripts\setup_schema.py" (
+    echo Running schema checks...
+    python backend\scripts\setup_schema.py
+)
+echo Database checks complete.
 echo.
 
 REM Start server
@@ -80,7 +83,7 @@ echo Cleaning up port 8000...
 for /f "tokens=5" %%a in ('netstat -aon ^| findstr :8000 ^| findstr LISTENING') do taskkill /F /PID %%a >nul 2>&1
 
 echo Launching server...
-start /B python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
+start /B python -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --reload
 
 echo Waiting for server to start...
 timeout /t 15 /nobreak >nul

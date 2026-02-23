@@ -8,6 +8,7 @@ import json
 from docx import Document
 from app.core.config import settings
 from app.services.rag_service import retrieve_documents, vector_store
+from app.core.logger import activity_logger
 
 router = APIRouter()
 
@@ -32,6 +33,9 @@ class GenerationRequest(BaseModel):
 
 @router.post("/generate_statement")
 async def generate_statement(request: GenerationRequest):
+    party_name = request.document_metadata.charging_party
+    activity_logger.log_event("Generation", "START", party_name, f"Generating Position Statement based on {len(request.allegations_list)} allegations.")
+    
     api_key = settings.AZURE_OPENAI_API_KEY
     endpoint = settings.AZURE_OPENAI_ENDPOINT
     deployment_name = "gpt-5"
@@ -96,11 +100,14 @@ Categories: {request.document_metadata.all_detected_categories}
     try:
         chat_res = requests.post(chat_url, headers=headers, json=payload)
         if chat_res.status_code != 200:
-            raise Exception(f"Chat generation failed: {chat_res.status_code} - {chat_res.text}")
+            err_msg = f"Chat generation failed: {chat_res.status_code} - {chat_res.text}"
+            activity_logger.log_event("Generation", "ERROR", party_name, err_msg)
+            raise Exception(err_msg)
         
         completion = chat_res.json()
         generated_text = completion["choices"][0]["message"]["content"]
     except Exception as e:
+        activity_logger.log_event("Generation", "ERROR", party_name, str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
     # 3. Create Word Document
@@ -125,8 +132,11 @@ Categories: {request.document_metadata.all_detected_categories}
         file_path = downloads_path / file_name
         
         doc.save(str(file_path))
+        activity_logger.log_event("Generation", "SUCCESS", party_name, f"Position statement saved to {file_path}")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to generate Word document: {e}")
+        err_msg = f"Failed to generate Word document: {e}"
+        activity_logger.log_event("Generation", "ERROR", party_name, err_msg)
+        raise HTTPException(status_code=500, detail=err_msg)
 
     return {
         "status": "success",

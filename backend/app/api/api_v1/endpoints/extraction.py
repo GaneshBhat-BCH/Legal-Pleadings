@@ -4,6 +4,7 @@ import os
 import requests
 import json
 from app.core.config import settings
+from app.core.logger import activity_logger
 
 router = APIRouter()
 
@@ -14,8 +15,12 @@ class ExtractionRequest(BaseModel):
 async def extract_allegations(request: ExtractionRequest):
     file_path = request.file_path
     
+    activity_logger.log_event("Extraction", "START", file_path, "Starting Code Interpreter extraction")
+    
     if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
+        err_msg = f"File not found: {file_path}"
+        activity_logger.log_event("Extraction", "ERROR", file_path, err_msg)
+        raise HTTPException(status_code=404, detail=err_msg)
     
     api_key = settings.AZURE_OPENAI_API_KEY
     # Use exact endpoint URLs as provided
@@ -35,10 +40,13 @@ async def extract_allegations(request: ExtractionRequest):
             upload_res = requests.post(files_endpoint, headers=headers, files=files, data=data)
             
         if upload_res.status_code != 200:
-            raise Exception(f"Upload failed: {upload_res.status_code} - {upload_res.text}")
+            err_msg = f"Upload failed: {upload_res.status_code} - {upload_res.text}"
+            activity_logger.log_event("Extraction", "ERROR", file_path, err_msg)
+            raise Exception(err_msg)
             
         file_id = upload_res.json()["id"]
     except Exception as e:
+        activity_logger.log_event("Extraction", "ERROR", file_path, str(e))
         raise HTTPException(status_code=500, detail=str(e))
         
     system_prompt = """[SYSTEM ROLE: EXPERT LEGAL EXTRACTION ENGINE]
@@ -127,11 +135,17 @@ Escape Characters: Properly escape all internal quotes and special characters to
             # Try parsing the cleanup response to confirm it's valid JSON
             try:
                 parsed_json = json.loads(content)
+                activity_logger.log_event("Extraction", "SUCCESS", file_path, f"Successfully parsed {len(content)} minified characters.")
                 return parsed_json
             except json.JSONDecodeError:
                 # Fallback to returning the raw content if parsing fails, but hope the prompt strictly generated minified JSON
-                raise HTTPException(status_code=500, detail="Output formatting failed to produce valid JSON.")
+                err_msg = "Output formatting failed to produce valid JSON."
+                activity_logger.log_event("Extraction", "ERROR", file_path, err_msg)
+                raise HTTPException(status_code=500, detail=err_msg)
         else:
-            raise Exception(f"Analysis failed: {response.status_code} - {response.text}")
+            err_msg = f"Analysis failed: {response.status_code} - {response.text}"
+            activity_logger.log_event("Extraction", "ERROR", file_path, err_msg)
+            raise Exception(err_msg)
     except Exception as e:
+        activity_logger.log_event("Extraction", "ERROR", file_path, str(e))
         raise HTTPException(status_code=500, detail=str(e))
