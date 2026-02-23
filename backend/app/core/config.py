@@ -2,9 +2,13 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 from pathlib import Path
+from dotenv import load_dotenv
 
 # Calculate root .env path (4 levels up from backend/app/core/config.py)
 ROOT_ENV_FILE = str(Path(__file__).resolve().parent.parent.parent.parent / ".env")
+
+# Force-load the .env file into os.environ before Pydantic initializes
+load_dotenv(ROOT_ENV_FILE)
 
 class Settings(BaseSettings):
     API_V1_STR: str = "/api/v1"
@@ -39,14 +43,12 @@ class Settings(BaseSettings):
         return f"postgresql+psycopg://{self.DB_USER}:{encoded_password}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
 
     model_config = SettingsConfigDict(
-        env_file=ROOT_ENV_FILE,
         case_sensitive=True,
         extra="ignore"
     )
 
 @lru_cache()
 def get_settings():
-    # Pass _env_file explicitly to guarantee it loads from the absolute path
-    return Settings(_env_file=ROOT_ENV_FILE)
+    return Settings()
 
 settings = get_settings()
