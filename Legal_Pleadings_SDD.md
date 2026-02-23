@@ -8,7 +8,7 @@ The **Legal Pleadings RAG & Processing Engine** is an intelligent automation sol
 The automated system is divided into three distinct phases to ensure strict knowledge control and human oversight:
 
 ### Phase 1: Knowledge Base Ingestion (RAG Pipeline Setup)
-Before any claims are processed, the system requires a foundation of legal knowledge. Historical company policies, state laws, and relevant employment guidelines are ingested into the backend. These documents are chunked, vectorized using OpenAI embeddings, and securely stored in a High-Dimensional PostgreSQL `pgvector` database to enable Semantic Search.
+Before any claims are processed, the system requires a foundation of legal knowledge. Past Position Statements, historical state laws, and relevant employment guidelines are ingested into the backend. These documents are chunked, vectorized using OpenAI embeddings, and securely stored in a High-Dimensional PostgreSQL `pgvector` database to enable Semantic Search.
 
 ### Phase 2: Intelligent Extraction
 An incoming PDF complaint is sent to the system. Using Azure OpenAI's Code Interpreter, the Engine performs a strict, verbatim extraction of actionable allegations alongside document metadata. It outputs pure, minified JSON.
@@ -74,7 +74,43 @@ graph LR
 
 ## 4. Sequence Workflow Diagrams
 
-To maximize clarity, the end-to-end workflow is divided into four distinct phases, each with its own sequence diagram:
+To maximize clarity, the end-to-end workflow is first presented as a complete system, followed by four distinct phase breakdowns.
+
+### Complete End-to-End Workflow
+
+```mermaid
+sequenceDiagram
+    participant Admin as Admin
+    participant RPA as RPA Bot / Co-Pilot
+    participant API as FastAPI Backend
+    participant AOAI as Azure OpenAI
+    participant DB as PGVector DB
+    participant OS as Local Filesystem
+
+    Note over Admin, DB: Phase 1 - Ingestion & Knowledge Base Setup
+    Admin->>API: Upload Past Position Statements
+    API->>AOAI: Generate Embeddings
+    API->>DB: Store Documents + Vectors
+
+    Note over RPA, AOAI: Phase 2 - Intelligent Extraction
+    RPA->>API: POST /api/v1/extraction/extract
+    API->>AOAI: Trigger Code Interpreter
+    AOAI-->>API: Extracted minified JSON
+    API-->>RPA: Validated JSON payload
+    
+    Note over RPA, API: Phase 3 - Human-in-the-Loop Validation
+    RPA->>RPA: Present extraction to Human Reviewer
+    RPA->>RPA: Human adds Rebuttals & Strategic Context
+    
+    Note over RPA, OS: Phase 4 - Document Generation (RAG Drafting)
+    RPA->>API: POST /api/v1/generation/generate_statement (JSON + User Responses)
+    API->>DB: Perform Similarity Search (RAG)
+    DB-->>API: Top K Relevant Legal Documents
+    API->>AOAI: Generate Draft (Context + Replies)
+    AOAI-->>API: Formal Position Statement Text
+    API->>OS: Compile & Save .docx to ~/Downloads/
+    API-->>RPA: "Status: Success"
+```
 
 ### A. Phase 1: Knowledge Base Ingestion (RAG Setup)
 This phase illustrates how the system builds its legal knowledge base before any user interaction occurs.
@@ -87,7 +123,7 @@ sequenceDiagram
     participant DB as PGVector DB
 
     Note over API, DB: Phase 1 - RAG Pipeline Setup (Ingestion)
-    Admin->>API: Upload Company Policies & Historical Data
+    Admin->>API: Upload Past Position Statements & Historical Data
     API->>AOAI: Generate Embeddings for Text Chunks
     AOAI-->>API: Return Vector Embeddings
     API->>DB: Store Document Text + High-Dimensional Vectors
