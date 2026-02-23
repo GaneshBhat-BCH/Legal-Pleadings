@@ -21,55 +21,40 @@ The Co-Pilot submits the approved context/rebuttals to the Backend as the "User 
 
 ## 3. High-Level System Architecture
 
+The architecture is structured across three distinct functional layers:
+
+### 1. Client Application Layer
+- **RPA Automator Bot:** The primary gateway that initiates the PDF extraction and orchestrates the workflow.
+- **Human Reviewer (Co-Pilot):** A critical intervention point where human experts validate AI extractions and inject strategic rebuttals securely.
+
+### 2. API Engine Layer
+- **FastAPI Backend:** The core orchestrator that handles routing, initiates AI processing, and brokers database connections.
+- **Word Document Generator:** A compilation script that converts formal AI drafted text into a styled, downloadable `.docx` file.
+
+### 3. External AI & Data Layer
+- **Azure OpenAI:** Provides `code_interpreter` for strict JSON extraction and `gpt-5` for advanced contextual drafting.
+- **PostgreSQL + pgvector:** A high-dimensional vector database used for Semantic Retrieval-Augmented Generation (RAG).
+
 ```mermaid
-graph LR
-    subgraph Client [Client Application]
-        direction TB
-        RPA[RPA Automator Bot]
-        CoPilot[Human Reviewer / Co-Pilot]
-    end
+graph TD
+    %% Main Entities
+    RPA([RPA Automator Bot])
+    CoPilot([Human Co-Pilot])
+    API[FastAPI Backend]
+    Compiler[Word Generator]
+    Azure{{Azure OpenAI}}
+    DB[(PGVector Database)]
 
-    subgraph Backend [API Engine]
-        direction TB
-        API[FastAPI Backend]
-        Compiler[Word Document Generator]
-    end
-
-    subgraph Services [External AI & Data]
-        direction TB
-        Azure[Azure OpenAI]
-        DB[(PostgreSQL + pgvector)]
-    end
-
-    %% Workflow Connections
-    RPA -->|1. Upload PDF| API
-    API <-->|2. Strict Extraction| Azure
-    API -.->|3. Return JSON Data| RPA
-    
-    RPA <-->|4. Review & Add Rebuttals| CoPilot
-    
-    RPA -->|5. Submit Approved Data| API
-    API <-->|6. Semantic Search (RAG)| DB
-    API <-->|7. Formal Drafting| Azure
-    API -->|8. Compile Statement| Compiler
-    Compiler -.->|9. Return .docx File| RPA
-
-    %% Minimalistic Professional Styling
-    classDef client fill:#e1f5fe,stroke:#01579b,stroke-width:2px,color:#000
-    classDef human fill:#fff9c4,stroke:#fbc02d,stroke-width:2px,color:#000
-    classDef server fill:#fff3e0,stroke:#e65100,stroke-width:2px,color:#000
-    classDef ext fill:#f3e5f5,stroke:#4a148c,stroke-width:2px,color:#000
-    classDef db fill:#e8f5e9,stroke:#1b5e20,stroke-width:2px,color:#000
-
-    class RPA client
-    class CoPilot human
-    class API,Compiler server
-    class Azure ext
-    class DB db
-    
-    style Client fill:#ffffff,stroke:#cccccc,stroke-dasharray: 5 5
-    style Backend fill:#ffffff,stroke:#cccccc,stroke-dasharray: 5 5
-    style Services fill:#ffffff,stroke:#cccccc,stroke-dasharray: 5 5
+    %% Step-by-Step Flow
+    RPA -->|Step 1: Upload| API
+    API <-->|Step 2: AI Extract| Azure
+    API -.->|Step 3: Return Data| RPA
+    RPA <-->|Step 4: Edit & Approve| CoPilot
+    RPA -->|Step 5: Submit Prompt| API
+    API <-->|Step 6: RAG Search| DB
+    API <-->|Step 7: Draft Text| Azure
+    API -->|Step 8: Finalize| Compiler
+    Compiler -.->|Step 9: Output .docx| RPA
 ```
 
 ## 4. Sequence Workflow Diagrams
