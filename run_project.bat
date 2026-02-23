@@ -42,29 +42,23 @@ if not exist "backend\venv" (
         exit /b
     )
     echo SUCCESS: Virtual environment created
-    set INSTALL_DEPS=1
 ) else (
     echo SUCCESS: Virtual environment exists
-    set INSTALL_DEPS=0
 )
 echo.
 
 REM Install dependencies if needed
 echo [3/5] Checking Dependencies...
-if "%INSTALL_DEPS%"=="1" (
-    echo Installing packages... This may take 2-5 minutes...
-    call backend\venv\Scripts\activate.bat
-    python -m pip install --upgrade pip
-    python -m pip install -r backend\requirements.txt
-    if %errorlevel% neq 0 (
-        echo ERROR: Failed to install packages
-        pause
-        exit /b
-    )
-    echo SUCCESS: Packages installed
-) else (
-    echo SUCCESS: Dependencies already installed
+echo Installing packages... This may take 2-5 minutes...
+call backend\venv\Scripts\activate.bat
+python -m pip install --upgrade pip
+python -m pip install -r backend\requirements.txt
+if %errorlevel% neq 0 (
+    echo ERROR: Failed to install packages
+    pause
+    exit /b
 )
+echo SUCCESS: Packages installed
 echo.
 
 REM Initialize database
