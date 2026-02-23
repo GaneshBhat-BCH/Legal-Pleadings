@@ -40,8 +40,8 @@ class Settings(BaseSettings):
         from pathlib import Path
         
         # Current file is backend/app/core/config.py
-        # We want backend/.env which is 2 levels up from core/
-        _base_dir = Path(__file__).resolve().parent.parent.parent
+        # We want the root .env which is 4 levels up
+        _base_dir = Path(__file__).resolve().parent.parent.parent.parent
         env_file = str(_base_dir / ".env")
         case_sensitive = True
 
