@@ -6,14 +6,16 @@ The **Legal Pleadings RAG & Processing Engine** is an intelligent automation sol
 ## 2. Process Overview (To-Be Automated Workflow)
 1. **Data Ingestion (Phase 1):** Historical legal policies and documents are ingested into a PostgreSQL `pgvector` database to establish a knowledge base.
 2. **Extraction via Code Interpreter (Phase 2):** An incoming PDF complaint is sent to the system. Using Azure OpenAI's Code Interpreter, the Engine performs a strict, verbatim extraction of actionable allegations alongside document metadata. It outputs pure, minified JSON.
-3. **Drafting via Contextual RAG (Phase 3):** A human or RPA bot provides context/rebuttals to the structured claims. The system queries the `pgvector` database for relevant legal rules, passes everything to a formal drafting LLM prompt, and saves a beautifully formatted `.docx` Position Statement directly to the local machine.
+3. **Human-in-the-Loop Approval (Co-Pilot):** A human reviewer (often interacting via an RPA Co-Pilot interface) reviews the structured allegations extracted by the AI, provides necessary context or rebuttals to the claims, and approves the data for final drafting.
+4. **Drafting via Contextual RAG (Phase 3):** The Co-Pilot submits the approved context/rebuttals to the Backend. The system queries the `pgvector` database for relevant legal rules, passes everything to a formal drafting LLM prompt, and saves a beautifully formatted `.docx` Position Statement directly to the local machine.
 
 ## 3. High-Level System Architecture
 
 ```mermaid
 graph TD
     %% Main Entities
-    User[RPA Bot / Co-Pilot]
+    User[RPA Bot / Automator]
+    Human[Human-in-the-Loop / Co-Pilot]
     FastAPI[FastAPI Backend Engine]
     Postgres[(PostgreSQL + pgvector)]
     AzureOpenAI[Azure OpenAI Services]
@@ -23,15 +25,18 @@ graph TD
     User -->|1. Uploads PDF| FastAPI
     FastAPI -->|2. Extracts Entities & Claims via Code Interpreter| AzureOpenAI
     AzureOpenAI -.->|3. Returns Minified JSON| FastAPI
-    FastAPI -.->|4. Returns JSON to RPA| User
+    FastAPI -.->|4. Returns Extracted JSON| User
     
-    User -->|5. Submits Draft Request + Rebuttals| FastAPI
-    FastAPI -->|6. Performs Semantic RAG Search| Postgres
-    Postgres -.->|7. Returns Legal Cites| FastAPI
-    FastAPI -->|8. Generates Position Statement| AzureOpenAI
-    AzureOpenAI -.->|9. Returns Formal Markdown/Text| FastAPI
-    FastAPI -->|10. Compiles Document| WordDoc
-    WordDoc -.->|11. Saves .docx to Downloads| User
+    User -->|5. Presents Data for Review| Human
+    Human -->|6. Approves Data & Adds Rebuttals| User
+    
+    User -->|7. Submits Draft Request + Rebuttals| FastAPI
+    FastAPI -->|8. Performs Semantic RAG Search| Postgres
+    Postgres -.->|9. Returns Legal Cites| FastAPI
+    FastAPI -->|10. Generates Position Statement| AzureOpenAI
+    AzureOpenAI -.->|11. Returns Formal Markdown/Text| FastAPI
+    FastAPI -->|12. Compiles Document| WordDoc
+    WordDoc -.->|13. Saves .docx to Downloads| User
 
     %% Styling
     classDef client fill:#e1f5fe,stroke:#01579b,stroke-width:2px;
@@ -40,6 +45,7 @@ graph TD
     classDef ai fill:#f3e5f5,stroke:#4a148c,stroke-width:2px;
     
     class User client;
+    class Human fill:#fff9c4,stroke:#fbc02d,stroke-width:2px;
     class FastAPI,WordDoc server;
     class Postgres db;
     class AzureOpenAI ai;
@@ -49,7 +55,8 @@ graph TD
 
 ```mermaid
 sequenceDiagram
-    participant RPA as RPA Co-Pilot
+    participant RPA as RPA Bot
+    participant Human as Human (Co-Pilot)
     participant API as FastAPI Backend
     participant AOAI as Azure OpenAI
     participant DB as PGVector DB
@@ -62,6 +69,11 @@ sequenceDiagram
     API->>AOAI: Trigger Code Interpreter with Strict JSON Prompt
     AOAI-->>API: Extracts minified JSON Response
     API-->>RPA: Validated JSON payload returned
+    
+    Note over RPA, Human: Human-in-the-Loop Validation
+    RPA->>Human: Present extracted allegations via Co-Pilot UI
+    Human-->>RPA: Review, Edit, & Add Rebuttals
+    Human->>RPA: Approve Data for Drafting
     
     Note over RPA, OS: Phase 3 - Document Generation
     RPA->>API: POST /api/v1/generation/generate_statement (JSON + User Responses)
