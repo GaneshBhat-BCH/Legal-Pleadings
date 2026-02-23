@@ -63,10 +63,11 @@ echo.
 
 REM Initialize database
 echo [4/5] Checking Database Initialization...
-call backend\venv\Scripts\activate.bat
-if exist "backend\scripts\setup_schema.py" (
+cd backend
+call venv\Scripts\activate.bat
+if exist "scripts\setup_schema.py" (
     echo Running schema checks...
-    python backend\scripts\setup_schema.py
+    python scripts\setup_schema.py
 )
 echo Database checks complete.
 echo.
@@ -77,7 +78,7 @@ echo Cleaning up port 8000...
 for /f "tokens=5" %%a in ('netstat -aon ^| findstr :8000 ^| findstr LISTENING') do taskkill /F /PID %%a >nul 2>&1
 
 echo Launching server...
-start /B python -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --reload
+start /B python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
 echo Waiting for server to start...
 timeout /t 15 /nobreak >nul
@@ -102,4 +103,5 @@ if %errorlevel% equ 0 (
     powershell -Command "& {Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.Interaction]::MsgBox('Server failed to start!', 'Critical', 'ERROR')}"
 )
 
+cd ..
 pause
