@@ -80,28 +80,37 @@ for /f "tokens=5" %%a in ('netstat -aon ^| findstr :8000 ^| findstr LISTENING') 
 echo Launching server...
 start /B venv\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
-echo Waiting for server to start...
-timeout /t 15 /nobreak >nul
+echo Waiting for server to start (this could take up to a minute)...
+set max_retries=30
+set retry_count=0
 
-REM Check if server is running
+:wait_loop
+timeout /t 2 /nobreak >nul
 curl -s http://localhost:8000/ >nul 2>&1
-if %errorlevel% equ 0 (
-    echo.
-    echo ====================================================
-    echo      SERVER IS RUNNING!
-    echo      http://localhost:8000/docs
-    echo ====================================================
-    echo.
-    powershell -Command "& {Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.Interaction]::MsgBox('Server is UP and RUNNING!\n\nAPI: http://localhost:8000/docs\n\nClick OK to keep running', 'Information', 'SUCCESS')}"
-    echo.
-    echo Press any key to STOP the server...
-    pause >nul
-    for /f "tokens=5" %%a in ('netstat -aon ^| findstr :8000 ^| findstr LISTENING') do taskkill /F /PID %%a >nul 2>&1
-    echo Server stopped.
-) else (
-    echo ERROR: Server failed to start
-    powershell -Command "& {Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.Interaction]::MsgBox('Server failed to start!', 'Critical', 'ERROR')}"
-)
+if %errorlevel% equ 0 goto server_running
+
+set /a retry_count+=1
+if %retry_count% lss %max_retries% goto wait_loop
+
+echo ERROR: Server failed to start after 60 seconds.
+powershell -Command "& {Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.Interaction]::MsgBox('Server failed to start after 60 seconds! Please check the terminal for errors.', 'Critical', 'ERROR')}"
+goto end_script
+
+:server_running
+echo.
+echo ====================================================
+echo      SERVER IS RUNNING!
+echo      http://localhost:8000/docs
+echo ====================================================
+echo.
+powershell -Command "& {Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.Interaction]::MsgBox('Server is UP and RUNNING!\n\nAPI: http://localhost:8000/docs\n\nClick OK to keep running', 'Information', 'SUCCESS')}"
+echo.
+echo Press any key to STOP the server...
+pause >nul
+for /f "tokens=5" %%a in ('netstat -aon ^| findstr :8000 ^| findstr LISTENING') do taskkill /F /PID %%a >nul 2>&1
+echo Server stopped.
+
+:end_script
 
 cd ..
 pause
