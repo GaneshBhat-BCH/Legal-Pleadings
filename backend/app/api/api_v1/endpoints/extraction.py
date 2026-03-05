@@ -123,6 +123,13 @@ Escape Characters: Properly escape all internal quotes and special characters to
             
             if response.status_code == 200:
                 result = response.json()
+                
+                # Fast fail if content filter restricted the output
+                if result.get("status") == "incomplete" and result.get("incomplete_details", {}).get("reason") == "content_filter":
+                    err_msg = "Analysis rejected by Azure OpenAI content filters."
+                    activity_logger.log_event("Extraction", "ERROR", file_path, err_msg)
+                    raise HTTPException(status_code=400, detail=err_msg)
+                    
                 content = None
                 if "choices" in result and len(result["choices"]) > 0:
                     content = result["choices"][0]["message"].get("content", "")
@@ -141,6 +148,12 @@ Escape Characters: Properly escape all internal quotes and special characters to
                         content = json.dumps(outputs)
                 else:
                     content = result
+                    
+                # Secondary fast fail if the AI just answered the default polite refusal string
+                if isinstance(content, str) and "I cannot assist with that request" in content:
+                    err_msg = "Analysis manually rejected by Azure OpenAI content filters."
+                    activity_logger.log_event("Extraction", "ERROR", file_path, err_msg)
+                    raise HTTPException(status_code=400, detail=err_msg)
                     
                 if isinstance(content, list):
                     # Handle cases where content is a list of dictionaries (e.g., text blocks)
