@@ -124,11 +124,7 @@ Escape Characters: Properly escape all internal quotes and special characters to
             if response.status_code == 200:
                 result = response.json()
                 
-                # Fast fail if content filter restricted the output
-                if result.get("status") == "incomplete" and result.get("incomplete_details", {}).get("reason") == "content_filter":
-                    err_msg = "Analysis rejected by Azure OpenAI content filters."
-                    activity_logger.log_event("Extraction", "ERROR", file_path, err_msg)
-                    raise HTTPException(status_code=400, detail=err_msg)
+                # Try to extract the response content
                     
                 content = None
                 if "choices" in result and len(result["choices"]) > 0:
@@ -149,11 +145,7 @@ Escape Characters: Properly escape all internal quotes and special characters to
                 else:
                     content = result
                     
-                # Secondary fast fail if the AI just answered the default polite refusal string
-                if isinstance(content, str) and "I cannot assist with that request" in content:
-                    err_msg = "Analysis manually rejected by Azure OpenAI content filters."
-                    activity_logger.log_event("Extraction", "ERROR", file_path, err_msg)
-                    raise HTTPException(status_code=400, detail=err_msg)
+                    pass
                     
                 if isinstance(content, list):
                     # Handle cases where content is a list of dictionaries (e.g., text blocks)
@@ -168,19 +160,21 @@ Escape Characters: Properly escape all internal quotes and special characters to
                 else:
                     content = str(content)
                     
-                # Clean minified string output ensuring it's valid JSON
-                # 1. strip formatting tags
-                if content.startswith("```json"):
-                    content = content[7:]
-                if content.endswith("```"):
-                    content = content[:-3]
-                
                 # Remove any unwanted whitespace (newlines/tabs) that might have slipped through
                 content = content.replace('\\n', '').replace('\\r', '').replace('\\t', '')
+                
+                # Robust JSON extraction using python regex to find the outermost JSON object
+                import re
+                json_match = re.search(r'(\{.*\})', content, re.DOTALL)
+                if json_match:
+                    content_to_parse = json_match.group(1)
+                else:
+                    content_to_parse = content
+
                 # Try parsing the cleanup response to confirm it's valid JSON
                 try:
-                    parsed_json = json.loads(content)
-                    activity_logger.log_event("Extraction", "SUCCESS", file_path, f"Successfully parsed {len(content)} minified characters.")
+                    parsed_json = json.loads(content_to_parse)
+                    activity_logger.log_event("Extraction", "SUCCESS", file_path, f"Successfully parsed {len(content_to_parse)} characters.")
                     return parsed_json
                 except json.JSONDecodeError:
                     err_msg = "Output formatting failed to produce valid JSON."
