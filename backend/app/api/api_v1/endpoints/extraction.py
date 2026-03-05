@@ -64,6 +64,10 @@ Step 2: Allegation & Particulars Extraction: Extract the allegations from the ch
 
 Step 3: Classification & Defense Mapping: Map each point to its Protected Class (Age, Race, ADA, etc.) and Legal Theory (Disparate Treatment, Retaliation, etc.). Suggest internal evidence and a defense strategy (LNDR) for every point.
 
+[CONTENT FILTER & COMPLIANCE RULES]
+This system processes sensitive legal documents. To comply with strict Azure OpenAI content safety filters, you MUST NOT quote sexually explicit, violent, or hate-related language directly in your JSON output. 
+Instead, you must self-censor explicit words (e.g., replace an explicit word with s***ual) or rewrite the explicit actions into clinical, sterile legal summaries (e.g., "alleged inappropriate physical contact"). Ensure the output JSON payload is completely sanitized of severe explicit language while preserving the exact legal meaning and total allegation count.
+
 [STRICT OUTPUT & MINIFICATION REQUIREMENTS]
 
 Compact Format: Output must be a single, continuous string of raw JSON.

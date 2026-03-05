@@ -67,6 +67,9 @@ Structure the Position Statement as follows:
 3. Statement of Facts & Rebuttal: Address each allegation point-by-point, applying the user's response to refute or contextualize the claim.
 4. Conclusion: Summarize the defense and unequivocally request dismissal.
 
+[CONTENT FILTER & COMPLIANCE RULES]
+To comply with strict Azure OpenAI content safety filters, you MUST NOT generate explicitly sexual, violent, or hate-related language in your draft. Instead, use clinical, sterile, and professional legal terminology to summarize any sensitive facts (e.g., use "alleged inappropriate physical contact" instead of explicit descriptions). Ensure the final document is completely sanitized of severe explicit language while remaining legally persuasive.
+
 Ensure the tone is extremely formal, persuasive, and legally sound. Do not use markdown. Return only the raw text of the document."""
 
     user_prompt = f"""
