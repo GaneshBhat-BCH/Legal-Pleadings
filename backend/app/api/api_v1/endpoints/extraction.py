@@ -113,10 +113,10 @@ Escape Characters: Properly escape all internal quotes and special characters to
     }
 
     # Run Code Interpreter Extraction
-    max_retries = 3
     retry_delay = 5
+    attempt = 0
     
-    for attempt in range(max_retries):
+    while True:
         try:
             # Added a 300-second timeout to handle slow completion while preventing indefinite hanging.
             response = requests.post(responses_endpoint, headers=post_headers, json=payload, timeout=300)
@@ -170,23 +170,29 @@ Escape Characters: Properly escape all internal quotes and special characters to
                     activity_logger.log_event("Extraction", "SUCCESS", file_path, f"Successfully parsed {len(content)} minified characters.")
                     return parsed_json
                 except json.JSONDecodeError:
-                    # Fallback to returning the raw content if parsing fails, but hope the prompt strictly generated minified JSON
                     err_msg = "Output formatting failed to produce valid JSON."
-                    activity_logger.log_event("Extraction", "ERROR", file_path, f"{err_msg} Raw Content: {content} | Full API Response: {json.dumps(result)}")
-                    raise HTTPException(status_code=500, detail=err_msg)
+                    err_details = f"{err_msg} Raw Content: {content} | Full API Response: {json.dumps(result)}"
+                    activity_logger.log_event("Extraction", "ERROR", file_path, err_details)
+                    raise Exception(err_details)
             else:
+                if response.status_code in [401, 403]:
+                    err_msg = f"Analysis failed due to credentials: {response.status_code} - {response.text}"
+                    activity_logger.log_event("Extraction", "ERROR", file_path, err_msg)
+                    raise HTTPException(status_code=401, detail="Authentication failed. Please check AI credentials.")
+                    
                 err_msg = f"Analysis failed: {response.status_code} - {response.text}"
                 activity_logger.log_event("Extraction", "ERROR", file_path, err_msg)
                 raise Exception(err_msg)
                 
-        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
-            activity_logger.log_event("Extraction", "WARNING", file_path, f"Connection error on attempt {attempt + 1}: {str(e)}")
-            if attempt < max_retries - 1:
-                time.sleep(retry_delay)
-                continue
-            else:
-                activity_logger.log_event("Extraction", "ERROR", file_path, f"Max retries reached. Error: {str(e)}")
-                raise HTTPException(status_code=500, detail="The connection to the AI extraction service was aborted. Please try again later.")
+        except HTTPException as e:
+            # Credential issues or explicit fast-fails raised as HTTPExceptions
+            raise e
         except Exception as e:
-            activity_logger.log_event("Extraction", "ERROR", file_path, str(e))
-            raise HTTPException(status_code=500, detail=str(e))
+            # Any connection, timeout, or parsing error is logged to the new CSV
+            err_msg = str(e)
+            activity_logger.log_ai_error(err_msg)
+            
+            attempt += 1
+            activity_logger.log_event("Extraction", "WARNING", file_path, f"Retrying infinite loop (attempt {attempt})...")
+            time.sleep(retry_delay)
+            continue

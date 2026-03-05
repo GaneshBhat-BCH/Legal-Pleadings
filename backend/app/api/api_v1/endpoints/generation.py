@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 from typing import List, Dict, Any
 import requests
 import json
+import time
 from docx import Document
 from app.core.config import settings
 from app.services.rag_service import retrieve_documents, vector_store
@@ -97,18 +98,33 @@ Categories: {request.document_metadata.all_detected_categories}
         "temperature": 0.5
     }
 
-    try:
-        chat_res = requests.post(chat_url, headers=headers, json=payload)
-        if chat_res.status_code != 200:
-            err_msg = f"Chat generation failed: {chat_res.status_code} - {chat_res.text}"
-            activity_logger.log_event("Generation", "ERROR", party_name, err_msg)
-            raise Exception(err_msg)
-        
-        completion = chat_res.json()
-        generated_text = completion["choices"][0]["message"]["content"]
-    except Exception as e:
-        activity_logger.log_event("Generation", "ERROR", party_name, str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+    retry_delay = 5
+    attempt = 0
+    while True:
+        try:
+            chat_res = requests.post(chat_url, headers=headers, json=payload)
+            if chat_res.status_code != 200:
+                if chat_res.status_code in [401, 403]:
+                    err_msg = f"Chat generation failed due to credentials: {chat_res.status_code} - {chat_res.text}"
+                    activity_logger.log_event("Generation", "ERROR", party_name, err_msg)
+                    raise HTTPException(status_code=401, detail="Authentication failed. Please check AI credentials.")
+                    
+                err_msg = f"Chat generation failed: {chat_res.status_code} - {chat_res.text}"
+                activity_logger.log_event("Generation", "ERROR", party_name, err_msg)
+                raise Exception(err_msg)
+            
+            completion = chat_res.json()
+            generated_text = completion["choices"][0]["message"]["content"]
+            break # Loop break on success
+        except HTTPException as e:
+            raise e
+        except Exception as e:
+            err_msg = str(e)
+            activity_logger.log_ai_error(err_msg)
+            attempt += 1
+            activity_logger.log_event("Generation", "WARNING", party_name, f"Retrying infinite loop (attempt {attempt})...")
+            time.sleep(retry_delay)
+            continue
 
     # 3. Create Word Document
     try:

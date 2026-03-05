@@ -63,5 +63,29 @@ class ActivityLogger:
             # Fallback to standard console logger if file op fails
             logger.error(f"Failed to write to activity CSV log: {e}")
 
+    def log_ai_error(self, error_message: str):
+        """
+        Logs strictly AI-related errors to a single CSV file, with no daily rotation.
+        Columns: Timestamp, Error
+        """
+        try:
+            filename = self.log_dir / "ai_error_log.csv"
+            
+            # Ensure headers only if file is fresh
+            if not filename.exists() or filename.stat().st_size == 0:
+                with open(filename, mode='w', newline='', encoding='utf-8') as f:
+                    writer = csv.writer(f)
+                    writer.writerow(["Timestamp", "Error"])
+                    
+            timestamp = datetime.now().isoformat()
+            
+            with open(filename, mode='a', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                writer.writerow([timestamp, error_message])
+                
+            logger.error(f"[AI ERROR] {error_message}")
+        except Exception as e:
+            logger.error(f"Failed to write to AI error CSV log: {e}")
+
 # Global instance
 activity_logger = ActivityLogger()
