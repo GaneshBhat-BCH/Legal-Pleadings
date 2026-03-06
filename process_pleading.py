@@ -1,12 +1,17 @@
-
 import os
 import requests
 import json
 import glob
 import time
+import asyncio
+import sys
 from dotenv import load_dotenv
 from pathlib import Path
 import ctypes
+
+# Add backend to path for RAG service imports
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "backend"))
+from app.services.rag_service import ingest_legal_analysis
 
 # Load environment variables
 env_path = Path(__file__).parent / ".env"
@@ -157,7 +162,7 @@ def show_message_box(title, message):
     """Displays a Windows message box."""
     ctypes.windll.user32.MessageBoxW(0, message, title, 0)
 
-def main():
+async def main():
     print("Starting Legal Pleading Analysis...")
     
     # 1. Find PDFs
@@ -199,8 +204,35 @@ def main():
             print("\n--- Analysis Output ---\n")
             print(content)
             
+            # --- REAL-TIME RAG INGESTION LOGIC ---
+            print("\n--- Starting RAG Vector Ingestion ---")
+            legal_audit = []
+            
+            try:
+                start_idx = content.find("{")
+                end_idx = content.rfind("}")
+                if start_idx != -1 and end_idx != -1:
+                    json_str = content[start_idx:end_idx+1]
+                    try:
+                        from json_repair import repair_json
+                        parsed = json.loads(repair_json(json_str))
+                    except ImportError:
+                        parsed = json.loads(json_str)
+                        
+                    if "legal_audit" in parsed:
+                        legal_audit = parsed["legal_audit"]
+            except Exception as e:
+                print(f"Failed to parse inner JSON: {e}")
+                
+            if legal_audit:
+                print(f"Found {len(legal_audit)} citations. Ingesting into Vector DB...")
+                count = await ingest_legal_analysis(legal_audit)
+                print(f"[{base_name}] SUCCESS: Saved {count} vectors to the RAG database!")
+            else:
+                print("WARNING: No valid 'legal_audit' JSON found. Skipping RAG ingestion.")
+            
             # Display Message Box for each file
-            show_message_box(f"Analysis Complete: {base_name}", f"File: {base_name}\n\nAnalysis finished. Check console for details.\n\nFile ID: {file_id}")
+            show_message_box(f"Pipeline Complete: {base_name}", f"File: {base_name}\n\nAzure AI Extraction & Vector DB Ingestion finished successfully.\n\nFile ID: {file_id}")
             
         except Exception as e:
             print(f"Error processing result for {pdf_path}: {e}")
@@ -209,4 +241,4 @@ def main():
         time.sleep(2)
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
