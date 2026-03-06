@@ -5,12 +5,14 @@ This guide covers everything you need to know to permanently host the Legal Plea
 ---
 
 ## 1. Install Docker Desktop (Command Line)
-If you haven't installed Docker yet, you can do it silently via the Windows Package Manager without downloading any installers.
+If your Virtual Machine does not have `winget` installed, you can silently download and install the official Docker executable directly from PowerShell.
 
 1. Open **PowerShell** as an Administrator.
-2. Run the following command:
+2. Run the following command block exactly as written to download the `.exe` and install it silently:
    ```powershell
-   winget install -e --id Docker.DockerDesktop
+   Invoke-WebRequest -Uri "https://desktop.docker.com/win/main/amd64/Docker%20Desktop%20Installer.exe" -OutFile "C:\DockerInstaller.exe"
+   Start-Process "C:\DockerInstaller.exe" -ArgumentList "install", "--quiet" -Wait
+   Remove-Item "C:\DockerInstaller.exe"
    ```
 3. Once the installation completes, **restart your Virtual Machine**.
 4. After restarting, open the **Docker Desktop** app from your Start Menu once to accept the terms and let it start its background engine.
