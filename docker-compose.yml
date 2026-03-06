@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  legal-api:
+    build: 
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: legal-pleadings-api
+    # This ensures Docker will automatically restart the server if the VM reboots or if it crashes
+    restart: always
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env
+    volumes:
+      # Map logs directory outward so you can still read your server CSV files
+      - ./backend/logs:/app/logs
+      # Map the generated Word Documents out to a new /Downloads folder in your project
+      - ./Downloads:/root/Downloads
