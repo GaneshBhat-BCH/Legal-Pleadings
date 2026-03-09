@@ -141,19 +141,28 @@ ADEA (Age): Background: Focuses on the "But-For" causation standard, meaning the
         "Content-Type": "application/json"
     }
     
-    try:
-        response = requests.post(RESPONSES_ENDPOINT, headers=headers, json=payload)
-        
-        if response.status_code == 200:
-            print("Analysis complete.")
-            return response.json()
-        else:
-            print(f"Analysis failed: {response.status_code} - {response.text}")
-            return None
+    while True:
+        try:
+            response = requests.post(RESPONSES_ENDPOINT, headers=headers, json=payload, timeout=60)
             
-    except Exception as e:
-        print(f"An error occurred during analysis: {e}")
-        return None
+            if response.status_code == 200:
+                print("Analysis complete.")
+                return response.json()
+            elif response.status_code in (401, 403):
+                print(f"CRITICAL: Authentication failed ({response.status_code}). Check AZURE_OPENAI_API_KEY.")
+                return None
+            else:
+                print(f"Analysis failed: {response.status_code} - {response.text}")
+                print("Retrying in 5 seconds...")
+                time.sleep(5)
+                
+        except requests.exceptions.Timeout:
+            print("Azure OpenAI request timed out after 60 seconds! Retrying...")
+            time.sleep(5)
+        except Exception as e:
+            print(f"An error occurred during analysis: {e}")
+            print("Retrying in 5 seconds...")
+            time.sleep(5)
     
 
 
