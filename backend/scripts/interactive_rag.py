@@ -29,10 +29,8 @@ async def run_interactive():
                     print(f"\n>> Finished Step: [{node_name}]")
                     
                     if node_name == "retrieve":
-                        # logic to show retrieved docs if available in state
-                        # Note: state_update contains the keys modified by the node
-                        if "context" in state_update:
-                            docs = state_update["context"]
+                        if "documents" in state_update:
+                            docs = state_update["documents"]
                             print(f"   Action: Retrieved {len(docs)} documents.")
                             for i, doc in enumerate(docs):
                                 source = doc.metadata.get('law_cited', 'Unknown')
