@@ -7,7 +7,6 @@ import asyncio
 import sys
 from dotenv import load_dotenv
 from pathlib import Path
-import ctypes
 
 # Add backend to path for RAG service imports
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "backend"))
@@ -158,9 +157,6 @@ ADEA (Age): Background: Focuses on the "But-For" causation standard, meaning the
     
 
 
-def show_message_box(title, message):
-    """Displays a Windows message box."""
-    ctypes.windll.user32.MessageBoxW(0, message, title, 0)
 
 async def main():
     print("Starting Legal Pleading Analysis...")
@@ -230,9 +226,7 @@ async def main():
                 print(f"[{base_name}] SUCCESS: Saved {count} vectors to the RAG database!")
             else:
                 print("WARNING: No valid 'legal_audit' JSON found. Skipping RAG ingestion.")
-            
-            # Display Message Box for each file
-            show_message_box(f"Pipeline Complete: {base_name}", f"File: {base_name}\n\nAzure AI Extraction & Vector DB Ingestion finished successfully.\n\nFile ID: {file_id}")
+            print(f"--- [{base_name}] Pipeline complete. Moving to next file. ---")
             
         except Exception as e:
             print(f"Error processing result for {pdf_path}: {e}")
