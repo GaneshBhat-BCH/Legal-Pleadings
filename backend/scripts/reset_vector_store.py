@@ -19,15 +19,24 @@ async def reset_db():
             host=settings.DB_HOST,
             port=settings.DB_PORT
         )
-        # Check if tables exist first to avoid error
-        # Assuming schemas are correct
-        print("Truncating tables in 'Legal_Pleadings'...")
-        await conn.execute('TRUNCATE TABLE "Legal_Pleadings".langchain_pg_embedding RESTART IDENTITY CASCADE;')
-        await conn.execute('TRUNCATE TABLE "Legal_Pleadings".langchain_pg_collection RESTART IDENTITY CASCADE;')
-        print("Vector store reset complete.")
+
+        # Step 1: DROP the tables completely (CASCADE handles the foreign key)
+        print("Dropping tables in 'Legal_Pleadings' schema...")
+        await conn.execute('DROP TABLE IF EXISTS "Legal_Pleadings".langchain_pg_embedding CASCADE;')
+        await conn.execute('DROP TABLE IF EXISTS "Legal_Pleadings".langchain_pg_collection CASCADE;')
+        print("Tables dropped successfully.")
         await conn.close()
+
+        # Step 2: Recreate tables by importing and triggering PGVector initialization
+        print("Recreating tables via PGVector...")
+        from app.db.vector_store import vector_store
+        async with vector_store._async_engine.begin() as conn:
+            await vector_store.acreate_tables_if_not_exists()
+        print("Tables recreated successfully!")
+        print("Vector store is clean and ready to use.")
+
     except Exception as e:
-        print(f"Error resetting DB (tables might not exist yet): {e}")
+        print(f"Error resetting DB: {e}")
 
 if __name__ == "__main__":
     asyncio.run(reset_db())

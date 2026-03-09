@@ -2,6 +2,7 @@
 from langchain_openai import AzureOpenAIEmbeddings
 from langchain_postgres import PGVector
 from app.core.config import settings
+import urllib.parse
 
 # Initialize Embeddings
 embeddings = AzureOpenAIEmbeddings(
@@ -13,11 +14,21 @@ embeddings = AzureOpenAIEmbeddings(
 
 from sqlalchemy.ext.asyncio import create_async_engine
 
-# Initialize Vector Store
-# Create async engine with search_path in server_settings
+# Build connection URI with search_path forced to Legal_Pleadings
+# This ensures PGVector CREATE TABLE statements land in the correct schema
+encoded_password = urllib.parse.quote_plus(settings.DB_PASSWORD)
+_base_uri = (
+    f"postgresql+asyncpg://{settings.DB_USER}:{encoded_password}"
+    f"@{settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_NAME}"
+)
+
 engine = create_async_engine(
-    settings.SQLALCHEMY_DATABASE_URI,
-    connect_args={"server_settings": {"search_path": "Legal_Pleadings,public"}}
+    _base_uri,
+    connect_args={
+        "server_settings": {
+            "search_path": "Legal_Pleadings,public"
+        }
+    }
 )
 
 vector_store = PGVector(
@@ -25,14 +36,12 @@ vector_store = PGVector(
     collection_name="legal_citations",
     connection=engine,
     use_jsonb=True,
-    create_extension=False, # We handle this via setup_db.py or manual admin action
+    create_extension=False,
 )
 
 async def init_vector_store():
     """
-    Initializes the vector store tables.
-    Note: Requires 'vector' extension to be enabled in Postgres.
+    Initializes the vector store tables inside Legal_Pleadings schema.
+    Requires: 'vector' extension enabled and Legal_Pleadings schema created first.
     """
-    # PGVector in langchain-postgres handles table creation automatically 
-    # if valid connection and permissions exist.
     pass
