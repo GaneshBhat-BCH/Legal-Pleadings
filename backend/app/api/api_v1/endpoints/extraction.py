@@ -140,7 +140,7 @@ Escape Characters: Properly escape all internal quotes and special characters to
                     for item in outputs:
                         if item.get("type") == "message" and "content" in item:
                             for msg_content in item.get("content", []):
-                                if msg_content.get("type") == "output_text" and "text" in msg_content:
+                                if msg_content.get("type") in ["text", "output_text"] and "text" in msg_content:
                                     text_parts.append(msg_content["text"])
                     if text_parts:
                         content = "".join(text_parts)

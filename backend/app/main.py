@@ -2,7 +2,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
-from app.api.api_v1.endpoints import rag, extraction, generation
+from app.api.api_v1.endpoints import rag, extraction, generation, drafting_generator
 
 app = FastAPI(title=settings.PROJECT_NAME)
 
@@ -26,6 +26,7 @@ app.add_middleware(
 app.include_router(rag.router, prefix=f"{settings.API_V1_STR}/rag", tags=["RAG"])
 app.include_router(extraction.router, prefix=f"{settings.API_V1_STR}/extraction", tags=["Extraction"])
 app.include_router(generation.router, prefix=f"{settings.API_V1_STR}/generation", tags=["Generation"])
+app.include_router(drafting_generator.router, prefix=f"{settings.API_V1_STR}/drafting", tags=["Drafting"])
 
 @app.get("/")
 def read_root():

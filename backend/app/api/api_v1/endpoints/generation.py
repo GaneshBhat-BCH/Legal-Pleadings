@@ -88,7 +88,11 @@ Categories: {request.document_metadata.all_detected_categories}
     user_prompt += f"\n\n[RELEVANT LAW VIA RAG]\n{rag_context}\n"
 
     # Call Azure OpenAI Chat Completions using exact endpoint
-    chat_url = f"{endpoint}openai/deployments/{deployment_name}/chat/completions?api-version=2024-05-01-preview"
+    if "chat/completions" in settings.AZURE_OPENAI_ENDPOINT:
+        chat_url = settings.AZURE_OPENAI_ENDPOINT
+    else:
+        chat_url = f"{settings.AZURE_OPENAI_ENDPOINT.rstrip('/')}/openai/deployments/{deployment_name}/chat/completions?api-version=2024-05-01-preview"
+    
     headers = {
         "api-key": api_key,
         "Content-Type": "application/json"
@@ -97,8 +101,7 @@ Categories: {request.document_metadata.all_detected_categories}
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
-        ],
-        "temperature": 0.5
+        ]
     }
 
     retry_delay = 5

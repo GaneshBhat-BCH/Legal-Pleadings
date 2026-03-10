@@ -143,7 +143,8 @@ ADEA (Age): Background: Focuses on the "But-For" causation standard, meaning the
     
     while True:
         try:
-            response = requests.post(RESPONSES_ENDPOINT, headers=headers, json=payload, timeout=60)
+            # Increased timeout to 300s to handle large PDF processing latency
+            response = requests.post(RESPONSES_ENDPOINT, headers=headers, json=payload, timeout=300)
             
             if response.status_code == 200:
                 print("Analysis complete.")
@@ -157,7 +158,7 @@ ADEA (Age): Background: Focuses on the "But-For" causation standard, meaning the
                 time.sleep(5)
                 
         except requests.exceptions.Timeout:
-            print("Azure OpenAI request timed out after 60 seconds! Retrying...")
+            print("Azure OpenAI request timed out after 300 seconds! Retrying...")
             time.sleep(5)
         except Exception as e:
             print(f"An error occurred during analysis: {e}")
@@ -197,12 +198,24 @@ async def main():
                 json.dump(result, f, indent=2)
             print(f"Analysis result saved to '{json_filename}'")
 
-            # Attempt to extract the content
-            content = None
+            # Attempt to extract the content using robust logic from extraction.py (fixed for 'text' type)
+            content = ""
             if "choices" in result and len(result["choices"]) > 0:
-                content = result["choices"][0]["message"]["content"]
-            elif "output" in result: # Some Azure endpoints use 'output'
-                 content = result["output"]
+                content = result["choices"][0]["message"].get("content", "")
+            elif "output" in result:
+                # new gpt-5 / Assistants standard format
+                outputs = result["output"]
+                text_parts = []
+                for item in outputs:
+                    if item.get("type") == "message" and "content" in item:
+                        for msg_content in item.get("content", []):
+                            # Corrected: check for both "text" and "output_text" types
+                            if msg_content.get("type") in ["text", "output_text"] and "text" in msg_content:
+                                text_parts.append(msg_content["text"])
+                if text_parts:
+                    content = "".join(text_parts)
+                else:
+                    content = json.dumps(outputs)
             else:
                 content = json.dumps(result, indent=2)
 
