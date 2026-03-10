@@ -9,9 +9,17 @@ from pathlib import Path
 from docx import Document
 from docx.shared import Pt, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml.ns import qn
+from docx.oxml import OxmlElement
 from app.core.config import settings
 from app.services.rag_service import retrieve_documents
 from app.core.logger import activity_logger
+
+# Resolve logo paths relative to this file so they work on any machine
+_HERE = Path(__file__).parent
+_ASSETS_DIR = _HERE.parent.parent.parent.parent / "assets"
+LEFT_LOGO = _ASSETS_DIR / "bch_logo.png"
+RIGHT_LOGO = _ASSETS_DIR / "hms_logo.png"
 
 router = APIRouter()
 
@@ -191,27 +199,23 @@ Summary: {structured_data.get('analysis_summary')}
         doc = Document()
         
         # Page 1: Logos (Borderless Table)
-        # Assuming logos are placed correctly in the backend or we can reference their absolute paths
-        left_logo_path = r"C:\Users\GaneshBhat\.gemini\antigravity\brain\992d3bc6-b9e8-4424-92af-148ae96d92eb\media__1773144732317.png"
-        right_logo_path = r"C:\Users\GaneshBhat\.gemini\antigravity\brain\992d3bc6-b9e8-4424-92af-148ae96d92eb\media__1773144732266.png"
-        
-        if Path(left_logo_path).exists() and Path(right_logo_path).exists():
+        if LEFT_LOGO.exists() and RIGHT_LOGO.exists():
             logo_table = doc.add_table(rows=1, cols=2)
             logo_table.allow_autofit = True
             
-            # Left cell (Image 1 - Now BCH)
+            # Left cell (BCH logo)
             left_cell = logo_table.cell(0, 0)
             left_pr = left_cell.paragraphs[0]
             left_pr.alignment = WD_ALIGN_PARAGRAPH.LEFT
             left_r = left_pr.add_run()
-            left_r.add_picture(left_logo_path, width=Inches(3.0))
+            left_r.add_picture(str(LEFT_LOGO), width=Inches(3.0))
             
-            # Right cell (Image 2 - Now HMS)
+            # Right cell (HMS logo)
             right_cell = logo_table.cell(0, 1)
             right_pr = right_cell.paragraphs[0]
             right_pr.alignment = WD_ALIGN_PARAGRAPH.RIGHT
             right_r = right_pr.add_run()
-            right_r.add_picture(right_logo_path, width=Inches(1.5))
+            right_r.add_picture(str(RIGHT_LOGO), width=Inches(1.5))
 
         # Page 1: Cover Letter
         doc.add_paragraph("Office of General Counsel\n300 Longwood Avenue, BCH3046\nBoston, Massachusetts 02115\n617-355-6800")
@@ -241,20 +245,34 @@ Summary: {structured_data.get('analysis_summary')}
 
         # Render AI Sections
         sections = [
-            ("I.\nINTRODUCTION", draft_data.get("introduction", "")),
-            ("II.\nBACKGROUND", draft_data.get("background", "")),
-            ("III.\nCOMPLAINT'S ALLEGATIONS", draft_data.get("allegations", "")),
-            ("IV.\nANALYSIS", draft_data.get("analysis", ""))
+            ("I.", "INTRODUCTION", draft_data.get("introduction", "")),
+            ("II.", "BACKGROUND", draft_data.get("background", "")),
+            ("III.", "COMPLAINT'S ALLEGATIONS", draft_data.get("allegations", "")),
+            ("IV.", "ANALYSIS", draft_data.get("analysis", ""))
         ]
         
-        for head, content in sections:
-            h = doc.add_paragraph(head)
+        for roman, title, content in sections:
+            h = doc.add_paragraph()
             h.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            for run in h.runs:
-                run.bold = True
-            for paragraph in content.split("\n\n"):
-                if paragraph.strip():
-                    doc.add_paragraph(paragraph.strip())
+            r1 = h.add_run(roman)
+            r1.bold = True
+            h.add_run("\n")
+            r2 = h.add_run(title)
+            r2.bold = True
+            
+            # Split content by double newline into paragraphs, then handle single newlines within
+            if content:
+                for block in content.split("\n\n"):
+                    block = block.strip()
+                    if not block:
+                        continue
+                    # Each block becomes one paragraph; internal single \n become line breaks
+                    p = doc.add_paragraph()
+                    lines = block.split("\n")
+                    for i, line in enumerate(lines):
+                        p.add_run(line)
+                        if i < len(lines) - 1:
+                            p.add_run().add_break()
 
         target_folder = Path(request.folder_path)
         if not target_folder.exists():
