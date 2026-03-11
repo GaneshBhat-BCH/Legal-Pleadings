@@ -62,7 +62,7 @@ Step 2: Allegation & Particulars Extraction: YOU MUST EXTRACT ALL ALLEGATIONS, P
 - No Limits: Extract every single numbered or bulleted point in the entire document. Do NOT cap at 20 or any other number.
 - Verbatim Extraction: You MUST extract every point EXACTLY word-for-word as it appears in the PDF. Do NOT summarize. Do NOT hallucinate. Do NOT mix sentences together. Copy the exact line from the text.
 
-Step 3: Classification & Defense Mapping: Map each point to its Protected Class (Age, Race, ADA, etc.) and Legal Theory (Disparate Treatment, Retaliation, etc.). Suggest internal evidence and a defense strategy (LNDR) for every point.
+Step 3: Classification & Defense Mapping: Map each point to its Legal Category (Sexual Orientation, Sex, Sexual Harassment, Retaliation, Religion, Race, National Origin, Disability ADA Failure to Accommodate, Color, Age). Suggest internal evidence and a defense strategy (LNDR) for every point.
 
 [CONTENT FILTER & COMPLIANCE RULES]
 This system processes sensitive legal documents. To comply with strict Azure OpenAI content safety filters, you MUST NOT quote sexually explicit, violent, or hate-related language directly in your JSON output. 
