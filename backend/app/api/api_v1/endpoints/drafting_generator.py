@@ -43,6 +43,9 @@ async def generate_position_draft(request: CombinedDraftRequest):
 You are a Senior Legal Analyst. Your task is to analyze a combined text block containing both "Extracted PDF content" and "Lawyer Notes/Feedback."
 You must separate these into a structured list of allegations and the respondent's rebuttal/facts for each.
 
+[MANDATORY: LEGAL CATEGORIZATION]
+For every allegation point, you must identify its primary Legal Category (e.g., "Race", "ADA/Disability", "Retaliation", "National Origin", "Sex/Gender", "Age"). This is critical for accurate legal research.
+
 [OUTPUT FORMAT: JSON]
 Return exactly this structure:
 {
@@ -52,7 +55,8 @@ Return exactly this structure:
   "points": [
     {
       "allegation": "The specific claim from the PDF text",
-      "lawyer_comment": "The response or factual rebuttal found in the lawyer's notes"
+      "lawyer_comment": "The response or factual rebuttal found in the lawyer's notes",
+      "legal_category": "The specific legal category for this point (e.g. Race, ADA, etc.)"
     }
   ]
 }
@@ -103,21 +107,45 @@ Return exactly this structure:
         activity_logger.log_event("Drafting", "ERROR", request.charging_party, f"Extraction failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to analyze text: {str(e)}")
 
-    # --- STEP 2: RAG RETRIEVAL ---
-    # Use the structured analysis as a basis for legal research.
-    search_query = structured_data.get("analysis_summary", "")
+    # --- STEP 2: TARGETED RAG RETRIEVAL (PHASE 4.2) ---
+    # We perform separate RAG searches for each unique legal category found in the case.
+    rag_context_blocks = []
+    unique_categories = set()
     for p in structured_data.get("points", []):
-         search_query += f" {p['allegation']} {p['lawyer_comment']}"
-         
-    try:
-        rag_docs = await retrieve_documents(search_query, k=8)
-        rag_context = "\n\n".join([f"Source citation: {d.page_content}" for d in rag_docs])
-    except Exception as e:
-        print(f"RAG Error: {e}")
-        rag_context = "No direct legal citations found in vector store."
+        cat = p.get("legal_category", "General Employment Law")
+        unique_categories.add(cat)
+    
+    if not unique_categories:
+        unique_categories.add("General Employment Law")
+
+    total_citations = 0
+    for category in unique_categories:
+        # Build a search query specifically for this category
+        cat_points = [p for p in structured_data.get("points", []) if p.get("legal_category") == category]
+        cat_search_query = f"{category} discrimination retaliation laws "
+        for p in cat_points[:3]: # Use first 3 points of this category for the query
+            cat_search_query += f" {p['allegation']}"
+        
+        try:
+            # Retrieve 4 targeted docs per category
+            cat_docs = await retrieve_documents(cat_search_query, k=4)
+            if cat_docs:
+                citations_text = "\n".join([f"- {d.page_content}" for d in cat_docs])
+                rag_context_blocks.append(f"[LEGAL CATEGORY: {category.upper()}]\n{citations_text}")
+                total_citations += len(cat_docs)
+        except Exception as e:
+            print(f"Targeted RAG Error for {category}: {e}")
+
+    rag_context = "\n\n".join(rag_context_blocks) if rag_context_blocks else "No direct legal citations found in vector store."
 
     # --- STEP 3: DRAFTING ---
     draft_prompt = """You are a Senior Legal Counsel. You will draft a formal, high-quality "Position Statement" for a legal case based on the provided facts and legal citations.
+
+[STRICT LEGAL MAPPING RULE]
+You MUST apply the correct law to the correct issue. 
+- Use citations labeled [LEGAL CATEGORY: RACE] ONLY for race-related allegations.
+- Use citations labeled [LEGAL CATEGORY: ADA] ONLY for disability-related allegations.
+- Do not mix or cross-contaminate different legal frameworks.
 
 [OUTPUT FORMAT: JSON]
 You MUST return your entire response as a structured JSON object exactly as follows:
@@ -125,14 +153,14 @@ You MUST return your entire response as a structured JSON object exactly as foll
   "introduction": "The text for I. INTRODUCTION. Include a summary of parties and high-level defense.",
   "background": "The text for II. BACKGROUND. Narrative history based on the lawyer notes.",
   "allegations": "The text for III. COMPLAINT'S ALLEGATIONS. Address each point specifically.",
-  "analysis": "The text for IV. ANALYSIS. Legal argument gracefully interweaving the [RELEVANT LEGAL CITATIONS]."
+  "analysis": "The text for IV. ANALYSIS. Legal argument gracefully interweaving the [RELEVANT LEGAL CITATIONS]. Ensure the analysis is issue-specific."
 }
 
 [INSTRUCTIONS]
 - Draft professionally, persuasively, clinically, and sterilely. 
 - Avoid markdown tags in the text fields. Only return the raw text.
 - Address the allegations in the 'allegations' section.
-- Interweave citations in the 'analysis' section."""
+- Interweave citations in the 'analysis' section using proper Bluebook or legal citation style."""
 
     draft_user_input = f"""
 [CASE DETAILS]
@@ -143,9 +171,9 @@ Summary: {structured_data.get('analysis_summary')}
 [ALLEGATIONS AND RESPONSES]
 """
     for i, p in enumerate(structured_data.get("points", []), 1):
-        draft_user_input += f"\nPoint {i}:\nAllegation: {p['allegation']}\nRespondent's Facts: {p['lawyer_comment']}\n"
+        draft_user_input += f"\nPoint {i} [Category: {p.get('legal_category')}]:\nAllegation: {p['allegation']}\nRespondent's Facts: {p['lawyer_comment']}\n"
 
-    draft_user_input += f"\n[RELEVANT LEGAL CITATIONS]\n{rag_context}"
+    draft_user_input += f"\n[RELEVANT LEGAL CITATIONS BY CATEGORY]\n{rag_context}"
 
     # Drafting Payload
     if "chat/completions" in settings.AZURE_OPENAI_ENDPOINT:
@@ -289,7 +317,7 @@ Summary: {structured_data.get('analysis_summary')}
             "charging_party": cp,
             "respondent": resp,
             "file_path": str(file_path.absolute()),
-            "citations_used": len(rag_docs) if 'rag_docs' in locals() else 0
+            "citations_used": total_citations if 'total_citations' in locals() else 0
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to create Word file: {str(e)}")
