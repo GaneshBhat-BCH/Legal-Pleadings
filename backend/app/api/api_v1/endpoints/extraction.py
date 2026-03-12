@@ -218,21 +218,28 @@ Return the ENTIRE updated JSON object. Ensure it remains valid JSON. Do not add 
                         ]
                     }
                     
-                    refine_res = requests.post(chat_url, headers=headers, json=refine_payload, timeout=60)
-                    if refine_res.status_code == 200:
-                        refined_content = refine_res.json()["choices"][0]["message"]["content"]
-                        # Extract JSON from potential preamble
-                        json_match = re.search(r'(\{.*\})', refined_content, re.DOTALL)
-                        if json_match:
-                            final_json = json.loads(json_match.group(1))
+                    try:
+                        # Increased timeout to 300 seconds (5 minutes) for the refinement layer
+                        refine_res = requests.post(chat_url, headers=headers, json=refine_payload, timeout=300)
+                        if refine_res.status_code == 200:
+                            refined_content = refine_res.json()["choices"][0]["message"]["content"]
+                            # Extract JSON from potential preamble
+                            json_match = re.search(r'(\{.*\})', refined_content, re.DOTALL)
+                            if json_match:
+                                final_json = json.loads(json_match.group(1))
+                            else:
+                                final_json = json.loads(refined_content)
+                            
+                            activity_logger.log_event("Extraction", "SUCCESS", file_path, "Successfully performed 2nd layer refinement.")
+                            return final_json
                         else:
-                            final_json = json.loads(refined_content)
-                        
-                        activity_logger.log_event("Extraction", "SUCCESS", file_path, "Successfully performed 2nd layer refinement.")
-                        return final_json
-                    else:
-                        # Fallback to the original extraction if refinement fails
-                        activity_logger.log_event("Extraction", "WARNING", file_path, f"Refinement layer failed ({refine_res.status_code}: {refine_res.text}). Returning base extraction.")
+                            # Fallback to the original extraction if refinement fails
+                            activity_logger.log_event("Extraction", "WARNING", file_path, f"Refinement layer failed ({refine_res.status_code}: {refine_res.text}). Returning base extraction.")
+                            return parsed_json
+                    except Exception as refine_err:
+                        # Catch timeouts or connection issues in refinement
+                        activity_logger.log_ai_error(f"Refinement layer exception: {str(refine_err)}")
+                        activity_logger.log_event("Extraction", "WARNING", file_path, f"Refinement layer exception: {str(refine_err)}. Returning base extraction.")
                         return parsed_json
 
                 except json.JSONDecodeError:
