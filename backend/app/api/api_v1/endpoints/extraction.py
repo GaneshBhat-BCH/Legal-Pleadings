@@ -219,8 +219,8 @@ Return the ENTIRE updated JSON object. Ensure it remains valid JSON. Do not add 
                     }
                     
                     try:
-                        # Increased timeout to 300 seconds (5 minutes) for the refinement layer
-                        refine_res = requests.post(chat_url, headers=headers, json=refine_payload, timeout=300)
+                        # Increased timeout to 1200 seconds (20 minutes) for the refinement layer
+                        refine_res = requests.post(chat_url, headers=headers, json=refine_payload, timeout=1200)
                         if refine_res.status_code == 200:
                             refined_content = refine_res.json()["choices"][0]["message"]["content"]
                             # Extract JSON from potential preamble
