@@ -8,7 +8,8 @@ venv/
 # Temporary files
 temp_*.html
 activity_log_*.csv
-data/
+data/*
+!data/.gitkeep
 logs/
 
 # OS files
