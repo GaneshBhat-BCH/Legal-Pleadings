@@ -1,9 +1,11 @@
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 import os
 import requests
 import json
 import time
+import sys
 from app.core.config import settings
 from app.core.logger import activity_logger
 
@@ -13,7 +15,7 @@ class ExtractionRequest(BaseModel):
     file_path: str = Field(..., description="Absolute local path to the PDF file")
 
 @router.post("/extract")
-async def extract_allegations(request: ExtractionRequest):
+def extract_allegations(request: ExtractionRequest):
     file_path = request.file_path
     
     activity_logger.log_event("Extraction", "START", file_path, "Starting Code Interpreter extraction")
@@ -235,7 +237,8 @@ CRITICAL: Return ONLY valid JSON. No markdown backticks, no text before or after
                             final_json = json.loads(refined_content)
                         
                         activity_logger.log_event("Extraction", "SUCCESS", file_path, "Successfully performed 2nd layer refinement and structure repair.")
-                        return final_json
+                        print(f"DEBUG: Extraction function returning for {file_path}", flush=True)
+                        return JSONResponse(content=final_json)
                     else:
                         # Fallback logic: if refinement fails, try one more time or log heavily
                         activity_logger.log_event("Extraction", "WARNING", file_path, f"Refinement layer failed ({refine_res.status_code}: {refine_res.text}). Retrying entire loop...")
