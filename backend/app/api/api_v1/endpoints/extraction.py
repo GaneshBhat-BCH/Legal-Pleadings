@@ -122,14 +122,14 @@ Escape Characters: Properly escape all internal quotes and special characters to
     
     while True:
         try:
-            # Added a 300-second timeout to handle slow completion while preventing indefinite hanging.
-            response = requests.post(responses_endpoint, headers=post_headers, json=payload, timeout=300)
+            # Increased timeout to 1200-seconds (20 minutes) to handle slow completion for large/complex documents.
+            response = requests.post(responses_endpoint, headers=post_headers, json=payload, timeout=1200)
             
             if response.status_code == 200:
                 result = response.json()
+                activity_logger.log_event("Extraction", "INFO", file_path, "Code Interpreter API responded with 200 SUCCESS.")
                 
                 # Try to extract the response content
-                    
                 content = None
                 if "choices" in result and len(result["choices"]) > 0:
                     content = result["choices"][0]["message"].get("content", "")
@@ -148,8 +148,6 @@ Escape Characters: Properly escape all internal quotes and special characters to
                         content = json.dumps(outputs)
                 else:
                     content = result
-                    
-                    pass
                     
                 if isinstance(content, list):
                     # Handle cases where content is a list of dictionaries (e.g., text blocks)
@@ -234,33 +232,41 @@ Return the ENTIRE updated JSON object. Ensure it remains valid JSON. Do not add 
                         return final_json
                     else:
                         # Fallback to the original extraction if refinement fails
-                        activity_logger.log_event("Extraction", "WARNING", file_path, f"Refinement layer failed ({refine_res.status_code}). Returning base extraction.")
+                        activity_logger.log_event("Extraction", "WARNING", file_path, f"Refinement layer failed ({refine_res.status_code}: {refine_res.text}). Returning base extraction.")
                         return parsed_json
 
                 except json.JSONDecodeError:
                     err_msg = "Output formatting failed to produce valid JSON."
                     err_details = f"{err_msg} Raw Content: {content} | Full API Response: {json.dumps(result)}"
                     activity_logger.log_event("Extraction", "ERROR", file_path, err_details)
-                    raise Exception(err_details)
+                    # Instead of raising we retry if it failed to format
+                    attempt += 1
+                    activity_logger.log_event("Extraction", "WARNING", file_path, f"Retrying due to invalid JSON (attempt {attempt})...")
+                    time.sleep(retry_delay)
+                    continue
             else:
                 if response.status_code in [401, 403]:
                     err_msg = f"Analysis failed due to credentials: {response.status_code} - {response.text}"
                     activity_logger.log_event("Extraction", "ERROR", file_path, err_msg)
                     raise HTTPException(status_code=401, detail="Authentication failed. Please check AI credentials.")
                     
-                err_msg = f"Analysis failed: {response.status_code} - {response.text}"
+                err_msg = f"Analysis failed with status {response.status_code}: {response.text}"
                 activity_logger.log_event("Extraction", "ERROR", file_path, err_msg)
-                raise Exception(err_msg)
+                # Retry for other errors
+                attempt += 1
+                activity_logger.log_event("Extraction", "WARNING", file_path, f"Retrying due to API error {response.status_code} (attempt {attempt})...")
+                time.sleep(retry_delay)
+                continue
                 
         except HTTPException as e:
             # Credential issues or explicit fast-fails raised as HTTPExceptions
             raise e
         except Exception as e:
-            # Any connection, timeout, or parsing error is logged to the new CSV
+            # Any connection, timeout, or parsing error is logged
             err_msg = str(e)
             activity_logger.log_ai_error(err_msg)
             
             attempt += 1
-            activity_logger.log_event("Extraction", "WARNING", file_path, f"Retrying infinite loop (attempt {attempt})...")
+            activity_logger.log_event("Extraction", "WARNING", file_path, f"Retrying after exception (attempt {attempt}): {err_msg}")
             time.sleep(retry_delay)
             continue
