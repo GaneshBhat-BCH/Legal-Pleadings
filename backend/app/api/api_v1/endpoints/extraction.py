@@ -182,26 +182,49 @@ Escape Characters: Properly escape all internal quotes and special characters to
                 # Now we use GPT-4o (Chat Completion) to refine the data and auto-populate lawyer comments where possible.
                 # We use GPT-4o's capability to repair malformed input from the 1st layer.
                 refinement_prompt = """[SYSTEM ROLE: SENIOR LEGAL PARALEGAL & JSON ARCHITECT]
-You are a Senior Legal Paralegal. Your task is to review data extracted from a legal PDF.
+You are a Senior Legal Paralegal. Your task is to review and repair data extracted from a legal PDF.
 The input may be messy, unformatted, or malformed JSON. Your goal is to:
-1. REPAIR: Format the input into a perfectly clean, valid JSON object.
+1. REPAIR: Format the input into a perfectly clean, valid JSON object following the strict schema below.
 2. ENRICH: Add a "lawyer_comment" field to every item in the "allegations_list".
 
 [HEURISTIC LOGIC FOR lawyer_comment]
 - FACTUAL/NEUTRAL: (Hire dates, Job Titles, policy names, locations). Generate a formal suggested response (e.g., "Respondent confirms...").
 - SUBSTANTIVE/ACTIONABLE: (Accusations, discrimination, retaliation, termination reasons). Set to exactly: "[NEED LAWYER INPUT]"
 
-[STRICT OUTPUT FORMAT]
-Return a JSON object with this exact structure:
+[STRICT OUTPUT SCHEMA]
+Return a JSON object with this exact full structure:
 {
+  "document_metadata": {
+    "charging_party": "string",
+    "respondent": "string",
+    "date_filed": "YYYY-MM-DD",
+    "legal_case_summary": "string",
+    "all_detected_categories": "Category1,Category2"
+  },
   "allegations_list": [
     {
+      "point_number": 1,
       "allegation_text": "extracted text here",
-      "lawyer_comment": "suggested response or [NEED LAWYER INPUT]"
+      "lawyer_comment": "suggested response or [NEED LAWYER INPUT]",
+      "is_rebuttable": true
+    }
+  ],
+  "allegation_classification": [
+    {
+      "point_ref": 1,
+      "category_type": ["string"],
+      "legal_theory": "string"
+    }
+  ],
+  "defense_and_proofs": [
+    {
+      "point_ref": 1,
+      "suggested_proofs": ["string"],
+      "defense_argument": "string"
     }
   ]
 }
-CRITICAL: Return ONLY valid JSON. No markdown backticks, no text before or after the JSON.
+CRITICAL: Return ONLY valid JSON. No markdown backticks, no text before or after the JSON. Ensure ALL original data points (metadata, classification, defenses) from the input are preserved and formatted correctly.
 """
                 
                 # Standard Chat Completion endpoint logic
