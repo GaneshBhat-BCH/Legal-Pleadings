@@ -173,84 +173,83 @@ Escape Characters: Properly escape all internal quotes and special characters to
                 else:
                     content_to_parse = content
 
-                # Try parsing the cleanup response to confirm it's valid JSON
-                try:
-                    parsed_json = json.loads(content_to_parse)
-                    activity_logger.log_event("Extraction", "INFO", file_path, f"Code Interpreter extraction complete. Starting 2nd layer refinement.")
-                    
-                    # --- STEP 4: SECOND LAYER REFINEMENT (Chat Completion) ---
-                    # Now we use GPT-4o (Chat Completion) to refine the data and auto-populate lawyer comments where possible.
-                    refinement_prompt = """[SYSTEM ROLE: SENIOR LEGAL PARALEGAL]
-You are a Senior Legal Paralegal. You are reviewing a JSON object containing extracted legal allegations.
-Your task is to add a "lawyer_comment" field to every item in the "allegations_list".
+                # Prepare data for refinement - we pass the raw content even if it isn't valid JSON yet
+                activity_logger.log_event("Extraction", "INFO", file_path, "Code Interpreter phase finished. Starting 2nd layer refinement for repair and enrichment.")
+                
+                # --- STEP 4: SECOND LAYER REFINEMENT (Chat Completion) ---
+                # Now we use GPT-4o (Chat Completion) to refine the data and auto-populate lawyer comments where possible.
+                # We use GPT-4o's capability to repair malformed input from the 1st layer.
+                refinement_prompt = """[SYSTEM ROLE: SENIOR LEGAL PARALEGAL & JSON ARCHITECT]
+You are a Senior Legal Paralegal. Your task is to review data extracted from a legal PDF.
+The input may be messy, unformatted, or malformed JSON. Your goal is to:
+1. REPAIR: Format the input into a perfectly clean, valid JSON object.
+2. ENRICH: Add a "lawyer_comment" field to every item in the "allegations_list".
 
-[HEURISTIC LOGIC FOR AUTO-POPULATION]
-Analyze the "allegation_text" for each point:
+[HEURISTIC LOGIC FOR lawyer_comment]
+- FACTUAL/NEUTRAL: (Hire dates, Job Titles, policy names, locations). Generate a formal suggested response (e.g., "Respondent confirms...").
+- SUBSTANTIVE/ACTIONABLE: (Accusations, discrimination, retaliation, termination reasons). Set to exactly: "[NEED LAWYER INPUT]"
 
-1. TYPE A: FACTUAL/NEUTRAL (e.g., Hire dates, Job Titles, existence of a specific policy, office locations, names of direct supervisors).
-   - If the point is purely factual and objective: Generate a formal suggested response.
-   - Example: "Respondent confirms that Complainant was hired on [Date] as a [Title] based on Hospital records."
-
-2. TYPE B: SUBSTANTIVE/ACTIONABLE (e.g., Accusations of yelling, claims of discrimination, failure to accommodate, retaliation, subjective interactions, or termination reasons).
-   - If the point is a complaint or an accusation: You MUST NOT guess the answer. 
-   - Set the lawyer_comment to exactly: "[NEED LAWYER INPUT]"
-
-[STRICT OUTPUT]
-Return the ENTIRE updated JSON object. Ensure it remains valid JSON. Do not add markdown backticks.
+[STRICT OUTPUT FORMAT]
+Return a JSON object with this exact structure:
+{
+  "allegations_list": [
+    {
+      "allegation_text": "extracted text here",
+      "lawyer_comment": "suggested response or [NEED LAWYER INPUT]"
+    }
+  ]
+}
+CRITICAL: Return ONLY valid JSON. No markdown backticks, no text before or after the JSON.
 """
-                    
-                    # Standard Chat Completion endpoint logic
-                    deployment_name = "gpt-5" # Or gpt-4o
-                    if "chat/completions" in settings.AZURE_OPENAI_ENDPOINT:
-                        chat_url = settings.AZURE_OPENAI_ENDPOINT
-                    else:
-                        chat_url = f"{settings.AZURE_OPENAI_ENDPOINT.rstrip('/')}/openai/deployments/{deployment_name}/chat/completions?api-version=2024-05-01-preview"
-                    
-                    headers = {
-                        "api-key": api_key,
-                        "Content-Type": "application/json"
-                    }
-                    
-                    refine_payload = {
-                        "messages": [
-                            {"role": "system", "content": refinement_prompt},
-                            {"role": "user", "content": f"Refine this extracted data:\n{json.dumps(parsed_json)}"}
-                        ]
-                    }
-                    
-                    try:
-                        # Increased timeout to 1200 seconds (20 minutes) for the refinement layer
-                        refine_res = requests.post(chat_url, headers=headers, json=refine_payload, timeout=1200)
-                        if refine_res.status_code == 200:
-                            refined_content = refine_res.json()["choices"][0]["message"]["content"]
-                            # Extract JSON from potential preamble
-                            json_match = re.search(r'(\{.*\})', refined_content, re.DOTALL)
-                            if json_match:
-                                final_json = json.loads(json_match.group(1))
-                            else:
-                                final_json = json.loads(refined_content)
-                            
-                            activity_logger.log_event("Extraction", "SUCCESS", file_path, "Successfully performed 2nd layer refinement.")
-                            return final_json
+                
+                # Standard Chat Completion endpoint logic
+                deployment_name = "gpt-5" # Or gpt-4o
+                if "chat/completions" in settings.AZURE_OPENAI_ENDPOINT:
+                    chat_url = settings.AZURE_OPENAI_ENDPOINT
+                else:
+                    chat_url = f"{settings.AZURE_OPENAI_ENDPOINT.rstrip('/')}/openai/deployments/{deployment_name}/chat/completions?api-version=2024-05-01-preview"
+                
+                headers = {
+                    "api-key": api_key,
+                    "Content-Type": "application/json"
+                }
+                
+                refine_payload = {
+                    "messages": [
+                        {"role": "system", "content": refinement_prompt},
+                        {"role": "user", "content": f"Format and Refine this data:\n{content_to_parse}"}
+                    ],
+                    "response_format": { "type": "json_object" } # Enforce JSON mode
+                }
+                
+                try:
+                    # Increased timeout to 1200 seconds (20 minutes) for the refinement layer
+                    refine_res = requests.post(chat_url, headers=headers, json=refine_payload, timeout=1200)
+                    if refine_res.status_code == 200:
+                        refined_content = refine_res.json()["choices"][0]["message"]["content"]
+                        # Extract JSON from potential preamble (though response_format should prevent it)
+                        json_match = re.search(r'(\{.*\})', refined_content, re.DOTALL)
+                        if json_match:
+                            final_json = json.loads(json_match.group(1))
                         else:
-                            # Fallback to the original extraction if refinement fails
-                            activity_logger.log_event("Extraction", "WARNING", file_path, f"Refinement layer failed ({refine_res.status_code}: {refine_res.text}). Returning base extraction.")
-                            return parsed_json
-                    except Exception as refine_err:
-                        # Catch timeouts or connection issues in refinement
-                        activity_logger.log_ai_error(f"Refinement layer exception: {str(refine_err)}")
-                        activity_logger.log_event("Extraction", "WARNING", file_path, f"Refinement layer exception: {str(refine_err)}. Returning base extraction.")
-                        return parsed_json
-
-                except json.JSONDecodeError:
-                    err_msg = "Output formatting failed to produce valid JSON."
-                    err_details = f"{err_msg} Raw Content: {content} | Full API Response: {json.dumps(result)}"
-                    activity_logger.log_event("Extraction", "ERROR", file_path, err_details)
-                    # Instead of raising we retry if it failed to format
+                            final_json = json.loads(refined_content)
+                        
+                        activity_logger.log_event("Extraction", "SUCCESS", file_path, "Successfully performed 2nd layer refinement and structure repair.")
+                        return final_json
+                    else:
+                        # Fallback logic: if refinement fails, try one more time or log heavily
+                        activity_logger.log_event("Extraction", "WARNING", file_path, f"Refinement layer failed ({refine_res.status_code}: {refine_res.text}). Retrying entire loop...")
+                        attempt += 1
+                        time.sleep(retry_delay)
+                        continue
+                except Exception as refine_err:
+                    # Catch timeouts or connection issues in refinement
+                    activity_logger.log_ai_error(f"Refinement layer exception: {str(refine_err)}")
+                    activity_logger.log_event("Extraction", "WARNING", file_path, f"Refinement layer exception: {str(refine_err)}. Retrying entire loop...")
                     attempt += 1
-                    activity_logger.log_event("Extraction", "WARNING", file_path, f"Retrying due to invalid JSON (attempt {attempt})...")
                     time.sleep(retry_delay)
                     continue
+
             else:
                 if response.status_code in [401, 403]:
                     err_msg = f"Analysis failed due to credentials: {response.status_code} - {response.text}"
