@@ -8,6 +8,8 @@ venv/
 # Temporary files
 temp_*.html
 activity_log_*.csv
+data/
+logs/
 
 # OS files
 .DS_Store
