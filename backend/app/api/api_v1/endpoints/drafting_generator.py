@@ -92,7 +92,8 @@ Return exactly this structure:
     }
     
     try:
-        res = requests.post(chat_url, headers=headers, json=analysis_payload, timeout=60)
+        # Increased timeout to 1200s (20 minutes) to handle complex combined legal text
+        res = requests.post(chat_url, headers=headers, json=analysis_payload, timeout=1200)
         if res.status_code != 200:
             raise Exception(f"Analysis failed: {res.text}")
         
@@ -212,7 +213,8 @@ Summary: {structured_data.get('analysis_summary')}
     }
 
     try:
-        res = requests.post(chat_url, headers=headers, json=draft_payload, timeout=120)
+        # Increased timeout to 1200s (20 minutes) for the full drafting synthesis
+        res = requests.post(chat_url, headers=headers, json=draft_payload, timeout=1200)
         if res.status_code != 200:
             raise Exception(f"Drafting failed: {res.text}")
         
