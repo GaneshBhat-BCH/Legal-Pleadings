@@ -29,6 +29,7 @@ async def generate_answer(query: str, context: List[Document]) -> str:
         azure_endpoint=settings.AZURE_OPENAI_ENDPOINT,
         api_key=settings.AZURE_OPENAI_API_KEY,
         temperature=0.7,
+        request_timeout=1200, # Standardized 20-minute timeout
     )
 
     # Simple prompt

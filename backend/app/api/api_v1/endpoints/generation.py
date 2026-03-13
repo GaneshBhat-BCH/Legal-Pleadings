@@ -108,7 +108,8 @@ Categories: {request.document_metadata.all_detected_categories}
     attempt = 0
     while True:
         try:
-            chat_res = requests.post(chat_url, headers=headers, json=payload)
+            # Standardized timeout to 1200s (20 minutes)
+            chat_res = requests.post(chat_url, headers=headers, json=payload, timeout=1200)
             if chat_res.status_code != 200:
                 if chat_res.status_code in [401, 403]:
                     err_msg = f"Chat generation failed due to credentials: {chat_res.status_code} - {chat_res.text}"

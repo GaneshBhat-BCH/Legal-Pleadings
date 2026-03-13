@@ -10,6 +10,7 @@ embeddings = AzureOpenAIEmbeddings(
     openai_api_version="2023-05-15",
     azure_endpoint=settings.AZURE_OPENAI_EMBEDDING_ENDPOINT,
     api_key=settings.AZURE_OPENAI_EMBEDDING_API_KEY,
+    request_timeout=1200, # Standardized 20-minute timeout
 )
 
 from sqlalchemy.ext.asyncio import create_async_engine
