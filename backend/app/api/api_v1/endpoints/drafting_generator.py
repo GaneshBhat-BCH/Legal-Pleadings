@@ -149,28 +149,41 @@ Return exactly this structure:
     rag_context = "\n\n".join(rag_context_blocks) if rag_context_blocks else "No direct legal citations found in vector store."
 
     # --- STEP 3: DRAFTING ---
-    draft_prompt = """You are a Senior Legal Counsel. You will draft a formal, high-quality "Position Statement" for a legal case based on the provided facts and legal citations.
+    # --- STEP 3: DRAFTING (REFINED SENIOR LITIGATOR STYLE) ---
+    draft_prompt = """[SYSTEM ROLE: SENIOR LITIGATION COUNSEL]
+You are a Senior Litigation Counsel at a top-tier law firm. You will draft a formal, high-quality "Position Statement" that is persuasive, clinical, and sterile.
 
-[STRICT LEGAL MAPPING RULE]
-You MUST apply the correct law to the correct issue. 
-- Use citations labeled [LEGAL CATEGORY: RACE] ONLY for race-related allegations.
-- Use citations labeled [LEGAL CATEGORY: ADA] ONLY for disability-related allegations.
-- Do not mix or cross-contaminate different legal frameworks.
+[LINGUISTIC STYLE: PROFESSIONAL LEGAL REGISTER]
+- Use formal legal transitions: "Notwithstanding the foregoing," "Accordingly," "Furthermore," "Respectfully submits," "Pursuant to."
+- Maintain a clinical and objective tone, especially when describing sensitive or disputed facts.
+- Avoid colloquialisms, contractions, and emotional language.
+- Phrasing should be assertive but professional (e.g., "Respondent unequivocally denies these factual assertions").
+
+[STRICT LEGAL MAPPING & HYBRID STRATEGY]
+- YOU MUST APPLY THE CORRECT LAW TO THE CORRECT ISSUE.
+- SUPPLEMENTARY LAW: If you identify relevant Federal or State laws (e.g., specific Massachusetts G.L. chapters) that are NOT in the [RELEVANT LEGAL CITATIONS] provided but are essential to a robust defense, you MUST incorporate them using your internal training.
+- Clearly differentiate between RAG-provided authorities and supplemented authorities.
 
 [OUTPUT FORMAT: JSON]
 You MUST return your entire response as a structured JSON object exactly as follows:
 {
-  "introduction": "The text for I. INTRODUCTION. Include a summary of parties and high-level defense.",
-  "background": "The text for II. BACKGROUND. Narrative history based on the lawyer notes.",
-  "allegations": "The text for III. COMPLAINT'S ALLEGATIONS. Address each point specifically.",
-  "analysis": "The text for IV. ANALYSIS. Legal argument gracefully interweaving the [RELEVANT LEGAL CITATIONS]. Ensure the analysis is issue-specific."
+  "introduction": "I. INTRODUCTION. Parties and high-level defense.",
+  "background": "II. BACKGROUND. Factual history from lawyer notes.",
+  "allegations": "III. COMPLAINT'S ALLEGATIONS. Point-for-point response with 12pt vertical spacing logic.",
+  "analysis": "IV. ANALYSIS. Legal argument interweaving RAG and supplemental internal knowledge citations.",
+  "legal_appendix": [
+    {
+      "citation": "Proper Bluebook Citation",
+      "full_text": "Complete statutory or case text for reference"
+    }
+  ]
 }
 
 [INSTRUCTIONS]
-- Draft professionally, persuasively, clinically, and sterilely. 
-- Avoid markdown tags in the text fields. Only return the raw text.
-- Address the allegations in the 'allegations' section.
-- Interweave citations in the 'analysis' section using proper Bluebook or legal citation style."""
+- Draft professionally and persuasively.
+- Do not use markdown tags in the text fields.
+- Ensure the 'analysis' section uses proper Bluebook style.
+- The 'legal_appendix' must contain the full reference text for EVERY law cited in the Analysis."""
 
     draft_user_input = f"""
 [CASE DETAILS]
@@ -215,14 +228,16 @@ Summary: {structured_data.get('analysis_summary')}
                 draft_data = json.loads(repair_json(json_str))
             else:
                 draft_data = json.loads(repair_json(draft_content))
+            
+            # Ensure legal_appendix exists
+            if "legal_appendix" not in draft_data:
+                draft_data["legal_appendix"] = []
+                
         except Exception as parse_err:
             print(f"Draft JSON Parse warning: {parse_err}")
-            # Fallback
             draft_data = {
                 "introduction": "Parsing Error. Raw content below:\n" + draft_content,
-                "background": "",
-                "allegations": "",
-                "analysis": ""
+                "background": "", "allegations": "", "analysis": "", "legal_appendix": []
             }
 
     except Exception as e:
@@ -292,25 +307,62 @@ Summary: {structured_data.get('analysis_summary')}
         for roman, title, content in sections:
             h = doc.add_paragraph()
             h.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            h_format = h.paragraph_format
+            h_format.space_before = Pt(18)
+            h_format.space_after = Pt(12)
+            
             r1 = h.add_run(roman)
             r1.bold = True
+            r1.font.size = Pt(12)
             h.add_run("\n")
             r2 = h.add_run(title)
             r2.bold = True
+            r2.font.size = Pt(12)
             
-            # Split content by double newline into paragraphs, then handle single newlines within
             if content:
                 for block in content.split("\n\n"):
                     block = block.strip()
                     if not block:
                         continue
-                    # Each block becomes one paragraph; internal single \n become line breaks
                     p = doc.add_paragraph()
+                    p_format = p.paragraph_format
+                    p_format.space_after = Pt(12) # Premium vertical spacing
+                    p_format.line_spacing = 1.15
+                    
                     lines = block.split("\n")
                     for i, line in enumerate(lines):
                         p.add_run(line)
                         if i < len(lines) - 1:
                             p.add_run().add_break()
+
+        # Page 3+: Legal Appendix
+        appendix_data = draft_data.get("legal_appendix", [])
+        if appendix_data:
+            doc.add_page_break()
+            app_h = doc.add_paragraph()
+            app_h.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            app_run = app_h.add_run("LEGAL APPENDIX: TABLE OF AUTHORITIES")
+            app_run.bold = True
+            app_run.font.size = Pt(14)
+            
+            for item in appendix_data:
+                cit = item.get("citation", "Unknown Citation")
+                text = item.get("full_text", "No text provided.")
+                
+                # Citation Header
+                cit_p = doc.add_paragraph()
+                cit_run = cit_p.add_run(cit)
+                cit_run.bold = True
+                cit_run.italic = True
+                cit_p.paragraph_format.space_before = Pt(12)
+                
+                # Statutory Text
+                text_p = doc.add_paragraph(text)
+                text_p.paragraph_format.left_indent = Inches(0.5)
+                text_p.paragraph_format.space_after = Pt(6)
+                text_p.style = doc.styles['Normal']
+                for run in text_p.runs:
+                    run.font.size = Pt(10) # Smaller font for appendix text
 
         target_folder = Path(request.folder_path)
         if not target_folder.exists():
