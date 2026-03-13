@@ -18,7 +18,7 @@ class ExtractionRequest(BaseModel):
 def extract_allegations(request: ExtractionRequest):
     file_path = request.file_path
     
-    activity_logger.log_event("Extraction", "START", file_path, "Starting Code Interpreter extraction")
+    activity_logger.log_event("Extraction", "START", file_path, "Starting GPT-5 Native Multimodal extraction (No Code Interpreter)")
     
     if not os.path.exists(file_path):
         err_msg = f"File not found: {file_path}"
@@ -88,14 +88,7 @@ Escape Characters: Properly escape all internal quotes and special characters to
 
     payload = {
         "model": "gpt-5",
-        "tools": [
-            {
-                "type": "code_interpreter",
-                 "container": {
-                    "type": "auto"
-                  }
-            }
-        ],
+        "tools": [], # REMOVED Code Interpreter for 10x speed boost
         "input": [
             {
                 "role": "user",
@@ -129,7 +122,7 @@ Escape Characters: Properly escape all internal quotes and special characters to
             
             if response.status_code == 200:
                 result = response.json()
-                activity_logger.log_event("Extraction", "INFO", file_path, "Code Interpreter API responded with 200 SUCCESS.")
+                activity_logger.log_event("Extraction", "INFO", file_path, "GPT-5 Native API responded with 200 SUCCESS.")
                 
                 # Try to extract the response content
                 content = None
@@ -176,7 +169,7 @@ Escape Characters: Properly escape all internal quotes and special characters to
                     content_to_parse = content
 
                 # Prepare data for refinement - we pass the raw content even if it isn't valid JSON yet
-                activity_logger.log_event("Extraction", "INFO", file_path, "Code Interpreter phase finished. Starting 2nd layer refinement for repair and enrichment.")
+                activity_logger.log_event("Extraction", "INFO", file_path, "GPT-5 Native phase finished. Starting 2nd layer refinement for repair and enrichment.")
                 
                 # --- STEP 4: SECOND LAYER REFINEMENT (Chat Completion) ---
                 # Now we use GPT-4o (Chat Completion) to refine the data and auto-populate lawyer comments where possible.
