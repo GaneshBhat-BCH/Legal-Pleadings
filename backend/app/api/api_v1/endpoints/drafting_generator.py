@@ -14,6 +14,34 @@ from docx.oxml import OxmlElement
 from app.core.config import settings
 from app.services.rag_service import retrieve_documents
 from app.core.logger import activity_logger
+import re
+
+def add_hyperlink(paragraph, text, bookmark_name):
+    """
+    Adds a hyperlink to a bookmark within the same document.
+    """
+    # This creates the necessary XML for an internal hyperlink
+    hyperlink = OxmlElement('w:hyperlink')
+    hyperlink.set(qn('w:anchor'), bookmark_name)
+    
+    new_run = OxmlElement('w:r')
+    rPr = OxmlElement('w:rPr')
+    
+    # Add blue color and underline for standard hyperlink look
+    c = OxmlElement('w:color')
+    c.set(qn('w:val'), '0563C1')
+    rPr.append(c)
+    u = OxmlElement('w:u')
+    u.set(qn('w:val'), 'single')
+    rPr.append(u)
+    
+    new_run.append(rPr)
+    t = OxmlElement('w:t')
+    t.text = text
+    new_run.append(t)
+    hyperlink.append(new_run)
+    paragraph._p.append(hyperlink)
+    return hyperlink
 
 # Resolve logo paths relative to this file so they work on any machine
 _HERE = Path(__file__).parent
@@ -181,10 +209,11 @@ You MUST return your entire response as a structured JSON object exactly as foll
 }
 
 [INSTRUCTIONS]
-- Draft professionally and persuasively.
+- Draft professionally and persuasively using Senior Litigator prose.
 - Do not use markdown tags in the text fields.
 - Ensure the 'analysis' section uses proper Bluebook style.
-- The 'legal_appendix' must contain the full reference text for EVERY law cited in the Analysis."""
+- HYPERLINK LOGIC: In the 'analysis' or 'allegations' text, for every law you cite, wrap the citation in [[LINK: citation_index]] where index is the 0-based index in the 'legal_appendix'.
+- The 'legal_appendix' must contain the full reference text for EVERY law cited."""
 
     draft_user_input = f"""
 [CASE DETAILS]
@@ -310,7 +339,7 @@ Summary: {structured_data.get('analysis_summary')}
             h = doc.add_paragraph()
             h.alignment = WD_ALIGN_PARAGRAPH.CENTER
             h_format = h.paragraph_format
-            h_format.space_before = Pt(18)
+            h_format.space_before = Pt(24) # Increased spacing
             h_format.space_after = Pt(12)
             
             r1 = h.add_run(roman)
@@ -322,20 +351,48 @@ Summary: {structured_data.get('analysis_summary')}
             r2.font.size = Pt(12)
             
             if content:
+                # Handle premium formatting for Allegations section specifically
+                is_allegations_sec = "ALLEGATIONS" in title
+                
                 for block in content.split("\n\n"):
                     block = block.strip()
                     if not block:
                         continue
+                    
                     p = doc.add_paragraph()
                     p_format = p.paragraph_format
-                    p_format.space_after = Pt(12) # Premium vertical spacing
-                    p_format.line_spacing = 1.15
+                    p_format.space_after = Pt(18) # Premium 18pt vertical spacing
+                    p_format.line_spacing = 1.2 # Slightly wider line spacing
                     
-                    lines = block.split("\n")
-                    for i, line in enumerate(lines):
-                        p.add_run(line)
-                        if i < len(lines) - 1:
-                            p.add_run().add_break()
+                    if is_allegations_sec and (block.upper().startswith("POINT") or block.upper().startswith("ALLEGATION")):
+                         # Special bold styling for the start of allegation points
+                         parts = block.split(":", 1)
+                         if len(parts) > 1:
+                             bold_r = p.add_run(parts[0] + ":")
+                             bold_r.bold = True
+                             block = parts[1]
+                    
+                    # Regex to find our special link syntax [[LINK: 0]]
+                    pattern = r'\[\[LINK: (\d+)\]\]'
+                    last_end = 0
+                    
+                    for match in re.finditer(pattern, block):
+                        # Add text before the link
+                        p.add_run(block[last_end:match.start()])
+                        
+                        idx = int(match.group(1))
+                        appendix_data = draft_data.get("legal_appendix", [])
+                        if idx < len(appendix_data):
+                            cit_text = appendix_data[idx].get("citation", "Citation")
+                            # Add interactive hyperlink
+                            add_hyperlink(p, cit_text, f"REF_{idx}")
+                        else:
+                            p.add_run("[Invalid Citation Index]")
+                        
+                        last_end = match.end()
+                    
+                    # Add remaining text
+                    p.add_run(block[last_end:])
 
         # Page 3+: Legal Appendix
         appendix_data = draft_data.get("legal_appendix", [])
@@ -347,24 +404,42 @@ Summary: {structured_data.get('analysis_summary')}
             app_run.bold = True
             app_run.font.size = Pt(14)
             
-            for item in appendix_data:
+            for i, item in enumerate(appendix_data):
                 cit = item.get("citation", "Unknown Citation")
                 text = item.get("full_text", "No text provided.")
                 
-                # Citation Header
+                # Citation Header with Bookmark for hyperlinking
                 cit_p = doc.add_paragraph()
+                cit_p.paragraph_format.space_before = Pt(18)
+                
+                # Create Bookmark
+                tag = cit_p._p.get_or_add_pPr().get_or_add_sectPr() # dummy to get access
+                # Correct way to add bookmark in python-docx
+                bookmark_name = f"REF_{i}"
+                
+                # Manual XML for bookmark start
+                bm_start = OxmlElement('w:bookmarkStart')
+                bm_start.set(qn('w:id'), str(i))
+                bm_start.set(qn('w:name'), bookmark_name)
+                cit_p._p.append(bm_start)
+                
                 cit_run = cit_p.add_run(cit)
                 cit_run.bold = True
                 cit_run.italic = True
-                cit_p.paragraph_format.space_before = Pt(12)
                 
+                # Manual XML for bookmark end
+                bm_end = OxmlElement('w:bookmarkEnd')
+                bm_end.set(qn('w:id'), str(i))
+                cit_p._p.append(bm_end)
+
                 # Statutory Text
                 text_p = doc.add_paragraph(text)
                 text_p.paragraph_format.left_indent = Inches(0.5)
-                text_p.paragraph_format.space_after = Pt(6)
+                text_p.paragraph_format.space_after = Pt(12)
                 text_p.style = doc.styles['Normal']
                 for run in text_p.runs:
-                    run.font.size = Pt(10) # Smaller font for appendix text
+                    run.font.size = Pt(10)
+                    run.font.color.rgb = None # Standard color
 
         target_folder = Path(request.folder_path)
         if not target_folder.exists():
