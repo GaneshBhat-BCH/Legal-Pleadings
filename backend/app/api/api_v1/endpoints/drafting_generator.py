@@ -180,40 +180,46 @@ Return exactly this structure:
     # --- STEP 3: DRAFTING ---
     # --- STEP 3: DRAFTING (REFINED SENIOR LITIGATOR STYLE) ---
     draft_prompt = """[SYSTEM ROLE: SENIOR LITIGATION COUNSEL]
-You are a Senior Litigation Counsel at a top-tier law firm. You will draft a formal, high-quality "Position Statement" that is persuasive, clinical, and sterile.
+You are a Senior Litigation Counsel at a top-tier law firm drafting a formal "Position Statement" for a client (Respondent).
+Your document must be PERSUASIVE, CLINICAL, and follow a strict 6-section structural architecture.
+
+[STRUCTURAL ARCHITECTURE: SECTIONS I - VI]
+I. INTRODUCTION: Brief overview of the Respondent (academic medical center), the parties, and a high-level dismissal demand.
+II. BACKGROUND: Factual history. Divide into logical sub-sections (e.g., A. Area/Program Name, B. Complainant's Employment, C. Performance/Behavioral Issues).
+III. COMPLAINT'S ALLEGATIONS: 
+    - MANDATORY PREAMBLE: Start this section exactly with: "The specific allegations contained in the Charge, as well as Respondent’s response to each of these allegations, are set out below."
+    - PATTERN: For every allegation, use: 
+      Allegation No. X: [Sentence]
+      Response No. X: [Detailed Response]
+IV. ANALYSIS: Formal legal argument. Use sub-sections (A, B, C) for different legal claims (e.g., Sexual Orientation, Retaliation). Interweave [RELEVANT LEGAL CITATIONS] provided via RAG.
+V. AFFIRMATIVE DEFENSES: A numbered list of at least 8-10 standard legal defenses (e.g., Failure to state a claim, Statute of limitations, Legitimate business purpose).
+VI. CONCLUSION: A formal closing paragraph requesting dismissal "for lack of probable cause," followed by a verification block ("I, upon information and belief...").
 
 [LINGUISTIC STYLE: PROFESSIONAL LEGAL REGISTER]
-- Use formal legal transitions: "Notwithstanding the foregoing," "Accordingly," "Furthermore," "Respectfully submits," "Pursuant to."
-- Maintain a clinical and objective tone, especially when describing sensitive or disputed facts.
-- Avoid colloquialisms, contractions, and emotional language.
-- Phrasing should be assertive but professional (e.g., "Respondent unequivocally denies these factual assertions").
+- Use formal transitions: "Notwithstanding the foregoing," "Accordingly," "Respectfully submits."
+- Tone: Sterile and objective. Avoid emotional language.
+- Formatting: Do not use markdown tags (like **bold** or #) in the text fields.
 
-[STRICT LEGAL MAPPING & HYBRID STRATEGY]
-- YOU MUST APPLY THE CORRECT LAW TO THE CORRECT ISSUE.
-- SUPPLEMENTARY LAW: If you identify relevant Federal or State laws (e.g., specific Massachusetts G.L. chapters) that are NOT in the [RELEVANT LEGAL CITATIONS] provided but are essential to a robust defense, you MUST incorporate them using your internal training.
-- Clearly differentiate between RAG-provided authorities and supplemented authorities.
+[CITATION & APPENDIX LOGIC]
+- For every law or case cited, wrap it in [[LINK: citation_index]] where index is the 0-based index in the 'legal_appendix'.
+- The 'legal_appendix' must contain the full reference text for EVERY law cited.
 
 [OUTPUT FORMAT: JSON]
-You MUST return your entire response as a structured JSON object exactly as follows:
+Return exactly this structure:
 {
-  "introduction": "I. INTRODUCTION. Parties and high-level defense.",
-  "background": "II. BACKGROUND. Factual history from lawyer notes.",
-  "allegations": "III. COMPLAINT'S ALLEGATIONS. Point-for-point response with 12pt vertical spacing logic.",
-  "analysis": "IV. ANALYSIS. Legal argument interweaving RAG and supplemental internal knowledge citations.",
+  "introduction": "Full text of Section I",
+  "background": "Full text of Section II",
+  "allegations": "Full text of Section III",
+  "analysis": "Full text of Section IV",
+  "defenses": "Full text of Section V",
+  "conclusion": "Full text of Section VI",
   "legal_appendix": [
     {
       "citation": "Proper Bluebook Citation",
-      "full_text": "Complete statutory or case text for reference"
+      "full_text": "Complete statutory/case text"
     }
   ]
-}
-
-[INSTRUCTIONS]
-- Draft professionally and persuasively using Senior Litigator prose.
-- Do not use markdown tags in the text fields.
-- Ensure the 'analysis' section uses proper Bluebook style.
-- HYPERLINK LOGIC: In the 'analysis' or 'allegations' text, for every law you cite, wrap the citation in [[LINK: citation_index]] where index is the 0-based index in the 'legal_appendix'.
-- The 'legal_appendix' must contain the full reference text for EVERY law cited."""
+}"""
 
     draft_user_input = f"""
 [CASE DETAILS]
@@ -268,7 +274,8 @@ Summary: {structured_data.get('analysis_summary')}
             print(f"Draft JSON Parse warning: {parse_err}")
             draft_data = {
                 "introduction": "Parsing Error. Raw content below:\n" + draft_content,
-                "background": "", "allegations": "", "analysis": "", "legal_appendix": []
+                "background": "", "allegations": "", "analysis": "", 
+                "defenses": "", "conclusion": "", "legal_appendix": []
             }
 
     except Exception as e:
@@ -332,14 +339,18 @@ Summary: {structured_data.get('analysis_summary')}
             ("I.", "INTRODUCTION", draft_data.get("introduction", "")),
             ("II.", "BACKGROUND", draft_data.get("background", "")),
             ("III.", "COMPLAINT'S ALLEGATIONS", draft_data.get("allegations", "")),
-            ("IV.", "ANALYSIS", draft_data.get("analysis", ""))
+            ("IV.", "ANALYSIS", draft_data.get("analysis", "")),
+            ("V.", "AFFIRMATIVE DEFENSES", draft_data.get("defenses", "")),
+            ("VI.", "CONCLUSION", draft_data.get("conclusion", ""))
         ]
         
         for roman, title, content in sections:
+            if not content: continue
+            
             h = doc.add_paragraph()
             h.alignment = WD_ALIGN_PARAGRAPH.CENTER
             h_format = h.paragraph_format
-            h_format.space_before = Pt(24) # Increased spacing
+            h_format.space_before = Pt(24)
             h_format.space_after = Pt(12)
             
             r1 = h.add_run(roman)
@@ -350,48 +361,51 @@ Summary: {structured_data.get('analysis_summary')}
             r2.bold = True
             r2.font.size = Pt(12)
             
-            if content:
-                # Handle premium formatting for Allegations section specifically
-                is_allegations_sec = "ALLEGATIONS" in title
+            is_allegations_sec = "ALLEGATIONS" in title
+            
+            # Splitting by double newline to handle AI generated paragraphs
+            blocks = content.split("\n\n")
+            
+            for block in blocks:
+                block = block.strip()
+                if not block: continue
                 
-                for block in content.split("\n\n"):
-                    block = block.strip()
-                    if not block:
-                        continue
-                    
-                    p = doc.add_paragraph()
-                    p_format = p.paragraph_format
-                    p_format.space_after = Pt(18) # Premium 18pt vertical spacing
-                    p_format.line_spacing = 1.2 # Slightly wider line spacing
-                    
-                    if is_allegations_sec and (block.upper().startswith("POINT") or block.upper().startswith("ALLEGATION")):
-                         # Special bold styling for the start of allegation points
-                         parts = block.split(":", 1)
-                         if len(parts) > 1:
-                             bold_r = p.add_run(parts[0] + ":")
-                             bold_r.bold = True
-                             block = parts[1]
-                    
-                    # Regex to find our special link syntax [[LINK: 0]]
+                p = doc.add_paragraph()
+                p_format = p.paragraph_format
+                p_format.space_after = Pt(12) # Standard 12pt line spacing for text
+                
+                # Special logic for Allegation/Response Numbering
+                # Pattern: 'Allegation No. X:' or 'Response No. X:'
+                is_header_line = False
+                if is_allegations_sec:
+                    # Clean up the line and check for headers
+                    match = re.match(r'^(Allegation No\.|Response No\.)\s*\d+[:\s]*', block, re.IGNORECASE)
+                    if match:
+                        # Split header from content
+                        header_end = block.find(":") + 1 if ":" in block else match.end()
+                        header_text = block[:header_end].strip()
+                        content_text = block[header_end:].strip()
+                        
+                        r_head = p.add_run(header_text)
+                        r_head.underline = True
+                        r_head.bold = True
+                        
+                        if content_text:
+                            p.add_run("\n" + content_text)
+                        is_header_line = True
+                
+                if not is_header_line:
+                    # Handle hyperlinks for normal text blocks
                     pattern = r'\[\[LINK: (\d+)\]\]'
                     last_end = 0
-                    
                     for match in re.finditer(pattern, block):
-                        # Add text before the link
                         p.add_run(block[last_end:match.start()])
-                        
                         idx = int(match.group(1))
                         appendix_data = draft_data.get("legal_appendix", [])
                         if idx < len(appendix_data):
                             cit_text = appendix_data[idx].get("citation", "Citation")
-                            # Add interactive hyperlink
                             add_hyperlink(p, cit_text, f"REF_{idx}")
-                        else:
-                            p.add_run("[Invalid Citation Index]")
-                        
                         last_end = match.end()
-                    
-                    # Add remaining text
                     p.add_run(block[last_end:])
 
         # Page 3+: Legal Appendix
