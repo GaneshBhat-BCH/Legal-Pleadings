@@ -19,7 +19,6 @@ class ExtractionRequest(BaseModel):
 def preprocess_text(text: str) -> str:
     """
     Locally masks high-severity content filter triggers to prevent Azure Gateway 400 errors.
-    Performs surgical word-level masking to preserve surrounding legal context.
     """
     toxic_patterns = {
         r'\bfucking\b': 'f*cking',
@@ -47,12 +46,10 @@ def preprocess_text(text: str) -> str:
 @router.post("/extract")
 def extract_allegations(request: ExtractionRequest):
     file_path = request.file_path
-    activity_logger.log_event("Extraction", "START", file_path, "Starting Optimized Unified Extraction")
+    activity_logger.log_event("Extraction", "START", file_path, "Starting Dynamic Unified Extraction")
     
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
-    
-    api_key = settings.AZURE_OPENAI_API_KEY
     
     # 1. Local Text Extraction
     try:
@@ -99,59 +96,71 @@ Return ONLY raw MINIFIED JSON.
   ]
 }"""
 
-    # Decide between Text or Vision
-    if len(extracted_text.strip()) < 100:
+    # Decide Content (Text or Vision)
+    is_scan = len(extracted_text.strip()) < 100
+    prepped_system = preprocess_text(system_prompt)
+    
+    if is_scan:
         activity_logger.log_event("Extraction", "WARNING", file_path, "Digital text missing. Using Vision fallback.")
         try:
             doc = fitz.open(file_path)
-            content_list = [{"type": "text", "text": preprocess_text(system_prompt)}]
-            # Process first 3 pages as images
+            content_list = [{"type": "text", "text": prepped_system}]
             for i in range(min(len(doc), 3)):
                 page = doc.load_page(i)
                 pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
                 b64_img = base64.b64encode(pix.tobytes("png")).decode("utf-8")
                 content_list.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64_img}"}})
             doc.close()
-            # GPT-5 compatibility: max_completion_tokens
-            payload = {"model": "gpt-5", "messages": [{"role": "user", "content": content_list}], "max_completion_tokens": 4096}
+            messages = [{"role": "user", "content": content_list}]
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Vision fallback failed: {str(e)}")
     else:
-        # GPT-5 compatibility: max_completion_tokens
-        payload = {
-            "model": "gpt-5",
-            "messages": [
-                {"role": "system", "content": preprocess_text(system_prompt)},
-                {"role": "user", "content": f"PROCESS THIS LEGAL DOCUMENT:\n\n{preprocess_text(extracted_text)}"}
-            ],
-            "max_completion_tokens": 4096
-        }
+        messages = [
+            {"role": "system", "content": prepped_system},
+            {"role": "user", "content": f"PROCESS THIS LEGAL DOCUMENT:\n\n{preprocess_text(extracted_text)}"}
+        ]
 
-    # Endpoint Config
+    # Endpoint Logic
     if "chat/completions" in settings.AZURE_OPENAI_ENDPOINT:
         chat_url = settings.AZURE_OPENAI_ENDPOINT
     else:
         chat_url = f"{settings.AZURE_OPENAI_ENDPOINT.rstrip('/')}/openai/deployments/gpt-5/chat/completions?api-version=2024-05-01-preview"
     
-    headers = {"api-key": api_key, "Content-Type": "application/json"}
+    headers = {"api-key": settings.AZURE_OPENAI_API_KEY, "Content-Type": "application/json"}
 
-    # Run with 3 attempts
-    for attempt in range(3):
+    # Dynamic Model Parameter Logic
+    # We try gpt-5 parameter (max_completion_tokens) first, then fallback to gpt-4o parameter (max_tokens).
+    param_versions = ["max_completion_tokens", "max_tokens"]
+    last_err = ""
+
+    for attempt in range(2): # One for each parameter version
+        token_param = param_versions[attempt]
+        payload = {
+            "model": "gpt-5", # Azure usually ignores this if it's in the URL, but good to have
+            "messages": messages,
+            token_param: 4096
+        }
+        
         try:
             response = requests.post(chat_url, headers=headers, json=payload, timeout=1200)
             if response.status_code == 200:
-                content = response.json()["choices"][0]["message"]["content"]
-                json_match = re.search(r'(\{.*\})', content.replace('\\n', '').replace('\\r', ''), re.DOTALL)
-                final_json_str = json_match.group(1) if json_match else content
+                raw_content = response.json()["choices"][0]["message"]["content"]
+                # Robust extraction
+                json_match = re.search(r'(\{.*\})', raw_content.replace('\\n', '').replace('\\r', ''), re.DOTALL)
+                final_json_str = json_match.group(1) if json_match else raw_content
                 from json_repair import repair_json
                 final_json = json.loads(repair_json(final_json_str))
-                activity_logger.log_event("Extraction", "SUCCESS", file_path, "Unified Extraction Successful.")
+                activity_logger.log_event("Extraction", "SUCCESS", file_path, f"Unified Extraction Successful using {token_param}.")
                 return JSONResponse(content=final_json)
+            elif response.status_code == 400 and "unsupported_parameter" in response.text:
+                # Autommatically switch to the alternative token parameter
+                activity_logger.log_event("Extraction", "INFO", file_path, f"Switching from {token_param} due to parameter mismatch.")
+                continue
             else:
-                activity_logger.log_event("Extraction", "WARNING", file_path, f"API Error {response.status_code}: {response.text}")
-                time.sleep(5)
+                last_err = f"API Error {response.status_code}: {response.text}"
+                activity_logger.log_event("Extraction", "WARNING", file_path, last_err)
         except Exception as e:
-            activity_logger.log_event("Extraction", "WARNING", file_path, f"Attempt {attempt+1} failed: {str(e)}")
-            time.sleep(5)
+            last_err = str(e)
+            activity_logger.log_event("Extraction", "WARNING", file_path, f"Request failed: {last_err}")
 
-    raise HTTPException(status_code=500, detail="Extraction failed after multiple attempts.")
+    raise HTTPException(status_code=500, detail=f"Extraction failed. Last error: {last_err}")
