@@ -82,25 +82,55 @@ Escape Characters: Properly escape all internal quotes and special characters to
 
 {"document_metadata":{"charging_party":"string","respondent":"string","date_filed":"YYYY-MM-DD","legal_case_summary":"string","all_detected_categories":"Category1,Category2"},"allegations_list":[{"point_number":1,"allegation_text":"string","is_rebuttable":true}],"allegation_classification":[{"point_ref":1,"category_type":["string"],"legal_theory":"string"}],"defense_and_proofs":[{"point_ref":1,"suggested_proofs":["string"],"defense_argument":"string"}]} .. After that pass the valid JSON Which will not have any parsing issue back as a result in fast api"""
 
-    payload = {
-        "model": "gpt-5",
-        "tools": [], # REMOVED Code Interpreter for 10x speed boost
-        "input": [
-            {
-                "role": "user",
-                "content": [
+    # Extraction logic selection
+    if len(extracted_text) < 500:
+        activity_logger.log_event("Extraction", "WARNING", file_path, "Low text detected (<500 chars). Document is likely a scan. Falling back to Multimodal Vision analysis.")
+        
+        # Upload File for Multimodal
+        try:
+            with open(file_path, "rb") as f:
+                files = {"file": (os.path.basename(file_path), f, "application/pdf")}
+                data = {"purpose": "assistants"}
+                upload_res = requests.post(files_endpoint, headers=headers, files=files, data=data, timeout=60)
+                
+            if upload_res.status_code != 200:
+                err_msg = f"Fallback upload failed: {upload_res.status_code} - {upload_res.text}"
+                activity_logger.log_event("Extraction", "ERROR", file_path, err_msg)
+                raise Exception(err_msg)
+                
+            file_id = upload_res.json()["id"]
+            
+            payload = {
+                "model": "gpt-5",
+                "tools": [],
+                "input": [
                     {
-                        "type": "input_text",
-                        "text": system_prompt
-                    },
-                    {
-                        "type": "input_text",
-                        "text": f"--- LEGAL DOCUMENT TEXT ---\n\n{extracted_text}"
+                        "role": "user",
+                        "content": [
+                            {"type": "input_text", "text": system_prompt},
+                            {"type": "input_file", "file_id": file_id}
+                        ]
                     }
                 ]
             }
-        ]
-    }
+        except Exception as e:
+            activity_logger.log_event("Extraction", "ERROR", file_path, f"Multimodal fallback preparation failed: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Scan processing failure: {str(e)}")
+    else:
+        # Standard Text-only payload for speed and maximum safety compliance
+        payload = {
+            "model": "gpt-5",
+            "tools": [],
+            "input": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": system_prompt},
+                        {"type": "input_text", "text": f"--- LEGAL DOCUMENT TEXT ---\n\n{extracted_text}"}
+                    ]
+                }
+            ]
+        }
     
     post_headers = {
         "api-key": api_key,
