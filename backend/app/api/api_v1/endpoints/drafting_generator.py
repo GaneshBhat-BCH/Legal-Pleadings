@@ -199,6 +199,7 @@ VI. CONCLUSION: A formal closing paragraph requesting dismissal "for lack of pro
 - Use formal transitions: "Notwithstanding the foregoing," "Accordingly," "Respectfully submits."
 - Tone: Sterile and objective. Avoid emotional language.
 - Formatting: Do not use markdown tags (like **bold** or #) in the text fields.
+- [NEED LAWYER INPUT] Protocol: If the input "Respondent's Facts" for an allegation is exactly "[NEED LAWYER INPUT]", you MUST output exactly "[NEED LAWYER INPUT]" as the full text for that Response No. X in Section III. Do not add any AI-generated commentary or guesses for these points.
 
 [CITATION & APPENDIX LOGIC]
 - For every law or case cited, wrap it in [[LINK: citation_index]] where index is the 0-based index in the 'legal_appendix'.
