@@ -112,17 +112,19 @@ Return ONLY raw MINIFIED JSON.
                 b64_img = base64.b64encode(pix.tobytes("png")).decode("utf-8")
                 content_list.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64_img}"}})
             doc.close()
-            payload = {"model": "gpt-5", "messages": [{"role": "user", "content": content_list}], "max_tokens": 4096}
+            # GPT-5 compatibility: max_completion_tokens
+            payload = {"model": "gpt-5", "messages": [{"role": "user", "content": content_list}], "max_completion_tokens": 4096}
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Vision fallback failed: {str(e)}")
     else:
+        # GPT-5 compatibility: max_completion_tokens
         payload = {
             "model": "gpt-5",
             "messages": [
                 {"role": "system", "content": preprocess_text(system_prompt)},
                 {"role": "user", "content": f"PROCESS THIS LEGAL DOCUMENT:\n\n{preprocess_text(extracted_text)}"}
             ],
-            "max_tokens": 4096
+            "max_completion_tokens": 4096
         }
 
     # Endpoint Config
