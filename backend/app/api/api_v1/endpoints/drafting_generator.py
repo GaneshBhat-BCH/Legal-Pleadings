@@ -52,7 +52,7 @@ RIGHT_LOGO = _ASSETS_DIR / "hms_logo.png"
 router = APIRouter()
 
 class CombinedDraftRequest(BaseModel):
-    raw_data: str = Field(..., description="The combined text containing both the PDF data and the lawyer's unstructured notes.")
+    raw_data: str = Field(..., description="The stringified table/list containing Allegations and Answers.")
     folder_path: str = Field(..., description="The absolute directory path where the generated Word document should be saved.")
     charging_party: str = Field("Unknown", description="Name of the charging party if known")
     respondent: str = Field("Boston Children's Hospital", description="Name of the respondent")
@@ -66,10 +66,10 @@ async def generate_position_draft(request: CombinedDraftRequest):
     deployment_name = "gpt-5" # Or gpt-4o as per user preference
     
     # --- STEP 1: ANALYSIS & STRUCTURE ---
-    # We use the LLM to separate the combined text into structured allegations and relevant responses/facts.
+    # We use the LLM to parse the raw_data (which is a stringified table/list of verified Allegation/Answer pairs).
     analysis_prompt = """[SYSTEM ROLE]
-You are a Senior Legal Analyst. Your task is to analyze a combined text block containing both "Extracted PDF content" and "Lawyer Notes/Feedback."
-You must separate these into a structured list of allegations and the respondent's rebuttal/facts for each.
+You are a Senior Legal Analyst. Your task is to process a list or table of "Allegations" and "Respondent Answers/Facts."
+This data is already verified. You must parse it into a clean JSON structure.
 
 [MANDATORY: LEGAL CATEGORIZATION]
 For every allegation point, you must identify its primary Legal Category. You MUST choose from this exact list:
@@ -92,8 +92,8 @@ Return exactly this structure:
   "analysis_summary": "Overall summary of the case",
   "points": [
     {
-      "allegation": "The specific claim from the PDF text",
-      "lawyer_comment": "The response or factual rebuttal found in the lawyer's notes",
+      "allegation": "The specific claim from the input",
+      "lawyer_note": "The actual response/fact provided for this point",
       "legal_category": "One of the categories above"
     }
   ]
@@ -230,7 +230,7 @@ Summary: {structured_data.get('analysis_summary')}
 [ALLEGATIONS AND RESPONSES]
 """
     for i, p in enumerate(structured_data.get("points", []), 1):
-        draft_user_input += f"\nPoint {i} [Category: {p.get('legal_category')}]:\nAllegation: {p['allegation']}\nRespondent's Facts: {p['lawyer_comment']}\n"
+        draft_user_input += f"\nPoint {i} [Category: {p.get('legal_category')}]:\nAllegation: {p['allegation']}\nRespondent's Facts: {p.get('lawyer_note', '')}\n"
 
     draft_user_input += f"\n[RELEVANT LEGAL CITATIONS BY CATEGORY]\n{rag_context}"
 
