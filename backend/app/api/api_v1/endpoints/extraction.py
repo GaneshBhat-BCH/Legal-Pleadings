@@ -88,7 +88,7 @@ Step 2: Allegation & Particulars Extraction: YOU MUST EXTRACT ALL ALLEGATIONS, P
 - No Limits: Extract every single numbered or bulleted point in the entire document. Do NOT cap at any specific number.
 - Verbatim Extraction: You MUST extract every point EXACTLY word-for-word as it appears in the PDF. Do NOT summarize or hallucinate.
 
-Step 3: Classification & Defense Mapping: Map each point to its Legal Category (S-e-x-u-a-l Orientation, S-e-x, S-e-x-u-a-l H-a-r-a-s-s-m-e-n-t, Retaliation, Religion, Race, National Origin, Disability ADA Failure to Accommodate, Color, Age). Suggest internal evidence and a defense strategy (LNDR) for every point.
+Step 3: Classification & Defense Mapping: Map each point to its Legal Category (Sexual Orientation, Sex, Sexual Harassment, Retaliation, Religion, Race, National Origin, Disability ADA Failure to Accommodate, Color, Age). Suggest internal evidence and a defense strategy (LNDR) for every point.
 
 [CONTENT FILTER & COMPLIANCE RULES]
 To comply with strict content safety filters, you MUST NOT quote s-e-x-u-a-l-l-y explicit, violent, or h-a-t-e-related language directly. 
@@ -136,12 +136,8 @@ Return ONLY a single, continuous string of raw MINIFIED JSON. No whitespace, no 
             raise HTTPException(status_code=500, detail=f"Scan processing failure: {str(e)}")
     else:
         # Standard Text-only payload for speed and maximum safety compliance
-        # Standard Text-only payload for speed and maximum safety compliance
         prepped_system = preprocess_text(system_prompt)
         prepped_input = preprocess_text(extracted_text)
-        
-        # DEBUG: Log the first 200 chars of prepped input to verify masking
-        activity_logger.log_event("Extraction", "DEBUG", file_path, f"Prepped Input Snippet: {prepped_input[:200]}")
         
         payload = {
             "model": "gpt-5",
