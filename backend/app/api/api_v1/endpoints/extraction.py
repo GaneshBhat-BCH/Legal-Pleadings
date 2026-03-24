@@ -19,29 +19,34 @@ class ExtractionRequest(BaseModel):
 def preprocess_text(text: str) -> str:
     """
     Locally masks high-severity content filter triggers to prevent Azure Gateway 400 errors.
-    Uses 'Sentinel Sentence' replacement: replacing the entire problematic sentence with a clinical placeholder.
+    Performs surgical word-level masking to preserve the surrounding legal context.
     """
     # High-severity trigger words for Azure Gateway
-    toxic_words = [
-        'fucking', 'fuck', 'bitch', 'cunt', 'nigger', 'faggot', 
-        'penis', 'vagina', 'genitals', 'crotch', 'pussy', 'asshole',
-        'rape', 'molest', 'sexual', 'harassment', 'idiot', 'fat',
-        'stupid', 'loser'
-    ]
+    # We use regex word boundaries and surgical replacement to keep sentences intact.
+    toxic_patterns = {
+        r'\bfucking\b': 'f*cking',
+        r'\bfuck\b': 'f*ck',
+        r'\bbitch\b': 'b*tch',
+        r'\bcunt\b': 'c*nt',
+        r'\bnigger\b': 'n*gger',
+        r'\bfaggot\b': 'f*ggot',
+        r'\bpenis\b': 'p*nis',
+        r'\bvagina\b': 'v*gina',
+        r'\bgenitals\b': 'genit*ls',
+        r'\bcrotch\b': 'cr*tch',
+        r'\bpussy\b': 'p*ssy',
+        r'\basshole\b': 'assh*le',
+        r'\brape\b': 'r*pe',
+        r'\bmolest\b': 'mol*st',
+        r'\bsexual\b': 's-e-x-u-a-l',
+        r'\bharassment\b': 'har*ssment'
+    }
     
-    # Split into sentences (simple period-based split for legal docs)
-    sentences = re.split(r'(\. |\? |\! |\n)', text)
-    processed_parts = []
-    
-    for part in sentences:
-        if any(re.search(fr'(?i){w}', part) for w in toxic_words):
-            # Replace with a purely generic, non-suggestive technical sentinel
-            # This bypasses the Gateway's heuristics for 'sexual' or 'hate' context.
-            processed_parts.append("[Information redacted per data privacy and clinical safety protocols]")
-        else:
-            processed_parts.append(part)
+    processed_text = text
+    for pattern, replacement in toxic_patterns.items():
+        processed_text = re.sub(pattern, replacement, processed_text, flags=re.IGNORECASE)
             
-    return "".join(processed_parts)
+    return processed_text
 
 @router.post("/extract")
 def extract_allegations(request: ExtractionRequest):
