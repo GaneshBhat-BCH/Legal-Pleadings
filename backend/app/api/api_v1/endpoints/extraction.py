@@ -1,21 +1,25 @@
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+from typing import Optional
 import os
-import requests
 import json
-import time
+import base64
+import fitz # PyMuPDF
 import re
+import asyncio
+from openai import AsyncAzureOpenAI
+from json_repair import repair_json
 from app.core.config import settings
 from app.core.logger import activity_logger
 
 router = APIRouter()
 
 class ExtractionRequest(BaseModel):
-    file_path: str = Field(..., description="Absolute local path to the PDF file")
+    file_path: Optional[str] = Field(None, description="Absolute local path to the PDF file")
+    file_id: Optional[str] = Field(None, description="Existing Azure OpenAI File ID")
 
 def preprocess_text(text: str) -> str:
-    """Mask high-severity triggers for Azure."""
     toxic_patterns = {
         r'\bfucking\b': 'f*cking', r'\bfuck\b': 'f*ck', r'\bbitch\b': 'b*tch',
         r'\bsexual\b': 's-e-x-u-a-l', r'\bharassment\b': 'har*ssment'
@@ -26,85 +30,115 @@ def preprocess_text(text: str) -> str:
     return processed_text
 
 @router.post("/extract")
-def extract_allegations(request: ExtractionRequest):
-    file_path = request.file_path
-    activity_logger.log_event("Extraction", "START", file_path, "Running TOTAL NATIVE 2-Pass Pipeline")
+async def extract_allegations(request: ExtractionRequest):
+    target = request.file_id or request.file_path
+    activity_logger.log_event("Extraction", "START", target, "Executing Optimized Multimodal Extraction (Vision Primary)")
     
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="File not found")
+    # Credentials from Settings
+    api_key = settings.AZURE_OPENAI_API_KEY
+    raw_endpoint = settings.AZURE_OPENAI_ENDPOINT
+    aoai_base = raw_endpoint.split("/openai")[0] if "/openai" in raw_endpoint else raw_endpoint
+    api_version = re.search(r'api-version=([^&]+)', raw_endpoint).group(1) if "api-version=" in raw_endpoint else "2025-01-01-preview"
     
-    # Force-read fresh OS env to bypass any stale config
-    api_key = os.environ.get("AZURE_OPENAI_API_KEY", settings.AZURE_OPENAI_API_KEY)
-    endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT", settings.AZURE_OPENAI_ENDPOINT).rstrip('/')
-    resource_base = endpoint.replace('/openai', '') # Generic base resource URL
-    
-    # 1. Multi-URL Upload Sweep to fix 404/401
-    file_urls = [
-        f"{endpoint}/files?api-version=2024-05-01-preview",
-        f"{resource_base}/openai/files?api-version=2024-05-01-preview"
-    ]
-    file_id = None
-    headers = {"api-key": api_key}
-    
-    for url in file_urls:
-        try:
-            with open(file_path, "rb") as f:
-                upload_res = requests.post(url, headers=headers, files={"file": (os.path.basename(file_path), f, "application/pdf")}, data={"purpose": "assistants"}, timeout=60)
-            if upload_res.status_code == 200:
-                file_id = upload_res.json()["id"]
-                break
-        except: pass
-        
-    if not file_id:
-        raise HTTPException(status_code=401, detail="Upload failed. Check API Key and Endpoint permissions.")
+    # Deployment Resolution
+    deployment_id = "gpt-4o" # default to a known vision-capable model
+    if "/deployments/" in raw_endpoint:
+        deployment_id = raw_endpoint.split("/deployments/")[1].split("/")[0]
 
-    # --- PASS 1: NATIVE RAW EXTRACTION ---
-    responses_url = f"{resource_base}/openai/v1/responses"
-    raw_payload = {
-        "model": "gpt-5",
-        "input": [{"role": "user", "content": [{"type": "input_text", "text": "Extract all text faithfully."}, {"type": "input_file", "file_id": file_id}]}]
-    }
-    
+    client = AsyncAzureOpenAI(azure_endpoint=aoai_base, api_key=api_key, api_version=api_version)
+
     try:
-        raw_res = requests.post(responses_url, headers={"api-key": api_key, "Content-Type": "application/json"}, json=raw_payload, timeout=1200)
-        if raw_res.status_code != 200:
-            raise Exception(f"Phase 1 Native failed: {raw_res.text}")
+        raw_result = None
         
-        raw_result = str(raw_res.json())
-
-        # --- LOCAL GUARDRAIL: SANITIZATION ---
-        clean_text = preprocess_text(raw_result)
-
-        # --- PASS 2: NATIVE STRUCTURED EXTRACTION ---
-        activity_logger.log_event("Extraction", "INFO", file_path, "Pass 2: Native Structured Logic")
-        system_prompt = """[SENIOR LEGAL DATA ENGINEER] Extract allegations from the sanitized text into JSON structure. Follow the strict 6-section metadata format."""
-        
-        struct_payload = {
-            "model": "gpt-5",
-            "input": [{"role": "user", "content": [{"type": "input_text", "text": preprocess_text(system_prompt)}, {"type": "input_text", "text": f"CLEAN DATA:\n{clean_text}"}]}]
-        }
-        
-        final_res = requests.post(responses_url, headers={"api-key": api_key, "Content-Type": "application/json"}, json=struct_payload, timeout=1200)
-        
-        if final_res.status_code == 200:
-            result_data = final_res.json()
-            # Extract content from /v1/responses format
-            content = ""
-            if "output" in result_data:
-                for item in result_data["output"]:
-                    if item.get("type") == "message" and "content" in item:
-                        for msg in item["content"]:
-                            if msg.get("type") in ["text", "output_text"]:
-                                content += msg.get("text", "")
-            else: content = str(result_data)
+        # --- PHASE 1: CHAT COMPLETION VISION OCR (PROVEN PATH) ---
+        if request.file_path and os.path.exists(request.file_path):
+            try:
+                activity_logger.log_event("Extraction", "INFO", request.file_path, "Phase 1: Local Vision capture for Chat Completion")
                 
-            from json_repair import repair_json
-            json_match = re.search(r'(\{.*\})', content.replace('\\n', '').replace('\\r', ''), re.DOTALL)
-            activity_logger.log_event("Extraction", "SUCCESS", file_path, "Total Native Extraction Success.")
-            return JSONResponse(content=json.loads(repair_json(json_match.group(1) if json_match else content)))
-        else:
-            raise Exception(f"Phase 2 Native failed: {final_res.text}")
+                doc = fitz.open(request.file_path)
+                base64_images = []
+                # Use slightly smaller matrix (1.5x) for better Azure quota compatibility
+                zoom_matrix = fitz.Matrix(1.5, 1.5)
+                for i in range(min(len(doc), 5)):
+                    page = doc.load_page(i)
+                    pix = page.get_pixmap(matrix=zoom_matrix)
+                    base64_images.append(base64.b64encode(pix.tobytes("png")).decode("utf-8"))
+                doc.close()
+
+                content_items = [{"type": "text", "text": "Extract text faithfully from these legal scans."}]
+                for b64 in base64_images:
+                    content_items.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}", "detail": "auto"}})
+
+                # Try with gpt-4o first (Vision leader), then fallback to current deployment
+                for model_candidate in ["gpt-4o", deployment_id]:
+                    try:
+                        response = await client.chat.completions.create(
+                            model=model_candidate,
+                            messages=[{"role": "user", "content": content_items}],
+                            max_completion_tokens=4096
+                        )
+                        raw_result = response.choices[0].message.content
+                        if raw_result: break
+                    except: pass
+                
+                if raw_result:
+                    activity_logger.log_event("Extraction", "SUCCESS", target, f"Vision OCR Success using {model_candidate}.")
+            except Exception as e:
+                activity_logger.log_event("Extraction", "ERROR", target, f"Vision Phase failed: {str(e)}")
+
+        # --- PHASE 2: NATIVE ASSISTANTS (The Backup/User-Requested Legacy logic) ---
+        if not raw_result and (request.file_id or request.file_path):
+            try:
+                activity_logger.log_event("Extraction", "INFO", target, "Phase 2: Native Assistant/Files Fallback")
+                
+                # Use existing file_id or upload one
+                file_id = request.file_id
+                if not file_id and request.file_path:
+                    with open(request.file_path, "rb") as f:
+                        f_obj = await client.files.create(file=f, purpose="assistants")
+                        file_id = f_obj.id
+                
+                if file_id:
+                    thread = await client.beta.threads.create(
+                        messages=[{"role": "user", "content": "Extract allegations.", "attachments": [{"file_id": file_id, "tools": [{"type": "file_search"}]}]}]
+                    )
+                    run = await client.beta.threads.runs.create(thread_id=thread.id, assistant_id=deployment_id, max_completion_tokens=4096)
+                    while run.status in ["queued", "in_progress"]:
+                        await asyncio.sleep(2)
+                        run = await client.beta.threads.runs.retrieve(thread_id=thread.id, run_id=run.id)
+                    
+                    if run.status == "completed":
+                        msgs = await client.beta.threads.messages.list(thread_id=thread.id)
+                        raw_result = msgs.data[0].content[0].text.value
+            except: pass
+
+        if not raw_result:
+            raise Exception("All multimodality paths (Vision OCR, Assistants API) are restricted on this resource.")
+
+        # --- PHASE 3: FINAL REFINEMENT & PARSING ---
+        clean_data = preprocess_text(raw_result)
+        refine_prompt = "[SENIOR LEGAL DATA ENGINEER] Format into 6-section JSON list."
+        
+        try:
+             res_f = await client.chat.completions.create(
+                model=deployment_id,
+                messages=[{"role": "system", "content": refine_prompt}, {"role": "user", "content": clean_data}],
+                response_format={"type": "json_object"},
+                max_completion_tokens=4096
+             )
+        except:
+             res_f = await client.chat.completions.create(
+                model=deployment_id,
+                messages=[{"role": "system", "content": refine_prompt}, {"role": "user", "content": clean_data}],
+                response_format={"type": "json_object"},
+                max_tokens=4096
+             )
+        
+        f_content = res_f.choices[0].message.content
+        j_match = re.search(r'(\{.*\})', f_content.replace('\\n', '').replace('\\r', ''), re.DOTALL)
+        
+        return JSONResponse(content=json.loads(repair_json(j_match.group(1) if j_match else f_content)))
 
     except Exception as e:
-        activity_logger.log_event("Extraction", "ERROR", file_path, f"Pipeline Error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Total Native Extraction failed: {str(e)}")
+        activity_logger.log_event("Extraction", "ERROR", target, f"Pipeline Failure: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))

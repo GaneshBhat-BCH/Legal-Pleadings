@@ -2,54 +2,41 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from typing import List, Dict, Any
 import os
-import requests
 import json
 import time
+import re
 from pathlib import Path
 from docx import Document
 from docx.shared import Pt, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
+from openai import AsyncAzureOpenAI
+from json_repair import repair_json
 from app.core.config import settings
 from app.services.rag_service import retrieve_documents
 from app.core.logger import activity_logger
-import re
 
+router = APIRouter()
+
+# --- UTILS ---
 def add_hyperlink(paragraph, text, bookmark_name):
-    """
-    Adds a hyperlink to a bookmark within the same document.
-    """
-    # This creates the necessary XML for an internal hyperlink
     hyperlink = OxmlElement('w:hyperlink')
     hyperlink.set(qn('w:anchor'), bookmark_name)
-    
     new_run = OxmlElement('w:r')
     rPr = OxmlElement('w:rPr')
-    
-    # Add blue color and underline for standard hyperlink look
-    c = OxmlElement('w:color')
-    c.set(qn('w:val'), '0563C1')
-    rPr.append(c)
-    u = OxmlElement('w:u')
-    u.set(qn('w:val'), 'single')
-    rPr.append(u)
-    
+    c = OxmlElement('w:color'); c.set(qn('w:val'), '0563C1'); rPr.append(c)
+    u = OxmlElement('w:u'); u.set(qn('w:val'), 'single'); rPr.append(u)
     new_run.append(rPr)
-    t = OxmlElement('w:t')
-    t.text = text
-    new_run.append(t)
+    t = OxmlElement('w:t'); t.text = text; new_run.append(t)
     hyperlink.append(new_run)
     paragraph._p.append(hyperlink)
     return hyperlink
 
-# Resolve logo paths relative to this file so they work on any machine
 _HERE = Path(__file__).parent
 _ASSETS_DIR = _HERE.parent.parent.parent.parent / "assets"
 LEFT_LOGO = _ASSETS_DIR / "bch_logo.png"
 RIGHT_LOGO = _ASSETS_DIR / "hms_logo.png"
-
-router = APIRouter()
 
 class CombinedDraftRequest(BaseModel):
     raw_data: str = Field(..., description="The stringified table/list containing Allegations and Answers.")
@@ -59,419 +46,101 @@ class CombinedDraftRequest(BaseModel):
 
 @router.post("/generate_position_draft")
 async def generate_position_draft(request: CombinedDraftRequest):
-    activity_logger.log_event("Drafting", "START", request.charging_party, "Processing combined text for legal draft")
+    activity_logger.log_event("Drafting", "START", request.charging_party, "Processing SDK-Powered Legal Draft (GPT-5/o1)")
     
     api_key = settings.AZURE_OPENAI_API_KEY
-    endpoint = settings.AZURE_OPENAI_ENDPOINT
-    deployment_name = "gpt-5" # Or gpt-4o as per user preference
+    raw_endpoint = settings.AZURE_OPENAI_ENDPOINT
     
-    # --- STEP 1: ANALYSIS & STRUCTURE ---
-    # We use the LLM to parse the raw_data (which is a stringified table/list of verified Allegation/Answer pairs).
-    analysis_prompt = """[SYSTEM ROLE]
-You are a Senior Legal Analyst. Your task is to process a list or table of "Allegations" and "Respondent Answers/Facts."
-This data is already verified. You must parse it into a clean JSON structure.
+    # Resolve SDK Base (Same as Matching Engine)
+    aoai_base = raw_endpoint.split("/openai")[0] if "/openai" in raw_endpoint else raw_endpoint
+    api_version = re.search(r'api-version=([^&]+)', raw_endpoint).group(1) if "api-version=" in raw_endpoint else "2025-01-01-preview"
+    deployment_id = raw_endpoint.split("/deployments/")[1].split("/")[0] if "/deployments/" in raw_endpoint else "gpt-5"
 
-[MANDATORY: LEGAL CATEGORIZATION]
-For every allegation point, you must identify its primary Legal Category. You MUST choose from this exact list:
-- Sexual Orientation
-- Sex
-- Sexual Harassment
-- Retaliation
-- Religion
-- Race
-- National Origin
-- Disability ADA Failure to Accommodate
-- Color
-- Age
+    client = AsyncAzureOpenAI(azure_endpoint=aoai_base, api_key=api_key, api_version=api_version)
 
-[OUTPUT FORMAT: JSON]
-Return exactly this structure:
-{
-  "charging_party": "string",
-  "respondent": "string",
-  "analysis_summary": "Overall summary of the case",
-  "points": [
-    {
-      "allegation": "The specific claim from the input",
-      "lawyer_note": "The actual response/fact provided for this point",
-      "legal_category": "One of the categories above"
-    }
-  ]
-}
-"""
-    
-    # Call Azure OpenAI Chat Completions using exact endpoint
-    if "chat/completions" in settings.AZURE_OPENAI_ENDPOINT:
-        chat_url = settings.AZURE_OPENAI_ENDPOINT
-    else:
-        # Standard base URL logic
-        chat_url = f"{settings.AZURE_OPENAI_ENDPOINT.rstrip('/')}/openai/deployments/{deployment_name}/chat/completions?api-version=2024-05-01-preview"
-    
-    headers = {
-        "api-key": api_key,
-        "Content-Type": "application/json"
-    }
-    
-    analysis_payload = {
-        "messages": [
-            {"role": "system", "content": analysis_prompt},
-            {"role": "user", "content": f"Analyze this integrated text:\n{request.raw_data}"}
-        ]
-    }
+    # --- STEP 1: ANALYSIS ---
+    analysis_prompt = """[SENIOR LEGAL ANALYST] Parse the following verified allegations and facts into clean JSON. Categorize each point into one of the 10 standard legal categories (Sexual Orientation, Sex, Harassment, Retaliation, Religion, Race, National Origin, Disability, Color, Age)."""
     
     try:
-        # Increased timeout to 1200s (20 minutes) to handle complex combined legal text
-        res = requests.post(chat_url, headers=headers, json=analysis_payload, timeout=1200)
-        if res.status_code != 200:
-            raise Exception(f"Analysis failed: {res.text}")
-        
-        analysis_content = res.json()["choices"][0]["message"]["content"]
-        
-        # Robust JSON extraction
+        # Use max_completion_tokens for GPT-5/o1
         try:
-            from json_repair import repair_json
-            start_idx = analysis_content.find("{")
-            end_idx = analysis_content.rfind("}")
-            if start_idx != -1 and end_idx != -1:
-                json_str = analysis_content[start_idx:end_idx+1]
-                structured_data = json.loads(repair_json(json_str))
-            else:
-                structured_data = json.loads(repair_json(analysis_content))
-        except Exception as parse_err:
-             print(f"JSON Parse warning: {parse_err}")
-             # Fallback if AI didn't return perfect JSON
-             structured_data = {"analysis_summary": analysis_content, "points": []}
-
+             res1 = await client.chat.completions.create(
+                model=deployment_id,
+                messages=[{"role": "system", "content": analysis_prompt}, {"role": "user", "content": f"DATA:\n{request.raw_data}"}],
+                response_format={"type": "json_object"},
+                max_completion_tokens=4096
+             )
+        except:
+             res1 = await client.chat.completions.create(
+                model=deployment_id,
+                messages=[{"role": "system", "content": analysis_prompt}, {"role": "user", "content": f"DATA:\n{request.raw_data}"}],
+                response_format={"type": "json_object"},
+                max_tokens=4096
+             )
+        
+        structured_data = json.loads(repair_json(res1.choices[0].message.content))
     except Exception as e:
-        activity_logger.log_event("Drafting", "ERROR", request.charging_party, f"Extraction failed: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to analyze text: {str(e)}")
+        activity_logger.log_event("Drafting", "ERROR", request.charging_party, f"Analysis Error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-    # --- STEP 2: TARGETED RAG RETRIEVAL (PHASE 4.2) ---
-    # We perform separate RAG searches for each unique legal category found in the case.
-    rag_context_blocks = []
-    unique_categories = set()
-    for p in structured_data.get("points", []):
-        cat = p.get("legal_category", "General Employment Law")
-        unique_categories.add(cat)
-    
-    if not unique_categories:
-        unique_categories.add("General Employment Law")
-
+    # --- STEP 2: RAG ---
+    unique_categories = set(p.get("legal_category", "General Employment Law") for p in structured_data.get("points", []))
+    rag_blocks = []
     total_citations = 0
-    for category in unique_categories:
-        # Build a search query specifically for this category
-        cat_points = [p for p in structured_data.get("points", []) if p.get("legal_category") == category]
-        cat_search_query = f"{category} discrimination retaliation laws "
-        for p in cat_points[:3]: # Use first 3 points of this category for the query
-            cat_search_query += f" {p['allegation']}"
-        
+    for cat in unique_categories:
         try:
-            # Retrieve 4 targeted docs per category
-            cat_docs = await retrieve_documents(cat_search_query, k=4)
-            if cat_docs:
-                citations_text = "\n".join([f"- {d.page_content}" for d in cat_docs])
-                rag_context_blocks.append(f"[LEGAL CATEGORY: {category.upper()}]\n{citations_text}")
-                total_citations += len(cat_docs)
-        except Exception as e:
-            print(f"Targeted RAG Error for {category}: {e}")
-
-    rag_context = "\n\n".join(rag_context_blocks) if rag_context_blocks else "No direct legal citations found in vector store."
+            docs = await retrieve_documents(f"{cat} discrimination defense", k=3)
+            if docs:
+                rag_blocks.append(f"[CATEGORY: {cat}]\n" + "\n".join(f"- {d.page_content}" for d in docs))
+                total_citations += len(docs)
+        except: pass
+    rag_context = "\n\n".join(rag_blocks)
 
     # --- STEP 3: DRAFTING ---
-    # --- STEP 3: DRAFTING (REFINED SENIOR LITIGATOR STYLE) ---
-    draft_prompt = """[SYSTEM ROLE: SENIOR LITIGATION COUNSEL]
-You are a Senior Litigation Counsel at a top-tier law firm drafting a formal "Position Statement" for a client (Respondent).
-Your document must be PERSUASIVE, CLINICAL, and follow a strict 6-section structural architecture.
-
-[STRUCTURAL ARCHITECTURE: SECTIONS I - VI]
-I. INTRODUCTION: Brief overview of the Respondent (academic medical center), the parties, and a high-level dismissal demand.
-II. BACKGROUND: Factual history. Divide into logical sub-sections (e.g., A. Area/Program Name, B. Complainant's Employment, C. Performance/Behavioral Issues).
-III. COMPLAINT'S ALLEGATIONS: 
-    - MANDATORY PREAMBLE: Start this section exactly with: "The specific allegations contained in the Charge, as well as Respondent’s response to each of these allegations, are set out below."
-    - PATTERN: For every allegation, use: 
-      Allegation No. X: [Sentence]
-      Response No. X: [Detailed Response]
-IV. ANALYSIS: Formal legal argument. Use sub-sections (A, B, C) for different legal claims (e.g., Sexual Orientation, Retaliation). Interweave [RELEVANT LEGAL CITATIONS] provided via RAG.
-V. AFFIRMATIVE DEFENSES: A numbered list of at least 8-10 standard legal defenses (e.g., Failure to state a claim, Statute of limitations, Legitimate business purpose).
-VI. CONCLUSION: A formal closing paragraph requesting dismissal "for lack of probable cause," followed by a verification block ("I, upon information and belief...").
-
-[LINGUISTIC STYLE: PROFESSIONAL LEGAL REGISTER]
-- Use formal transitions: "Notwithstanding the foregoing," "Accordingly," "Respectfully submits."
-- Tone: Sterile and objective. Avoid emotional language.
-- Formatting: Do not use markdown tags (like **bold** or #) in the text fields.
-- [NEED LAWYER INPUT] Protocol: If the input "Respondent's Facts" for an allegation is exactly "[NEED LAWYER INPUT]", you MUST output exactly "[NEED LAWYER INPUT]" as the full text for that Response No. X in Section III. Do not add any AI-generated commentary or guesses for these points.
-
-[CITATION & APPENDIX LOGIC]
-- For every law or case cited, wrap it in [[LINK: citation_index]] where index is the 0-based index in the 'legal_appendix'.
-- The 'legal_appendix' must contain the full reference text for EVERY law cited.
-
-[OUTPUT FORMAT: JSON]
-Return exactly this structure:
-{
-  "introduction": "Full text of Section I",
-  "background": "Full text of Section II",
-  "allegations": "Full text of Section III",
-  "analysis": "Full text of Section IV",
-  "defenses": "Full text of Section V",
-  "conclusion": "Full text of Section VI",
-  "legal_appendix": [
-    {
-      "citation": "Proper Bluebook Citation",
-      "full_text": "Complete statutory/case text"
-    }
-  ]
-}"""
-
-    draft_user_input = f"""
-[CASE DETAILS]
-Charging Party: {structured_data.get('charging_party', request.charging_party)}
-Respondent: {structured_data.get('respondent', request.respondent)}
-Summary: {structured_data.get('analysis_summary')}
-
-[ALLEGATIONS AND RESPONSES]
-"""
-    for i, p in enumerate(structured_data.get("points", []), 1):
-        draft_user_input += f"\nPoint {i} [Category: {p.get('legal_category')}]:\nAllegation: {p['allegation']}\nRespondent's Facts: {p.get('lawyer_note', '')}\n"
-
-    draft_user_input += f"\n[RELEVANT LEGAL CITATIONS BY CATEGORY]\n{rag_context}"
-
-    # Drafting Payload
-    if "chat/completions" in settings.AZURE_OPENAI_ENDPOINT:
-        chat_url = settings.AZURE_OPENAI_ENDPOINT
-    else:
-        chat_url = f"{settings.AZURE_OPENAI_ENDPOINT.rstrip('/')}/openai/deployments/{deployment_name}/chat/completions?api-version=2024-05-01-preview"
-
-    draft_payload = {
-        "messages": [
-            {"role": "system", "content": draft_prompt},
-            {"role": "user", "content": draft_user_input}
-        ]
-    }
-
+    draft_prompt = """[SENIOR LITIGATION COUNSEL] Draft a formal 6-section Position Statement (I. Intro, II. Background, III. Allegations/Responses, IV. Analysis, V. Defenses, VI. Conclusion). Use Section III preamble exactly. Use [NEED LAWYER INPUT] protection."""
+    
     try:
-        # Increased timeout to 1200s (20 minutes) for the full drafting synthesis
-        res = requests.post(chat_url, headers=headers, json=draft_payload, timeout=1200)
-        if res.status_code != 200:
-            raise Exception(f"Drafting failed: {res.text}")
-        
-        draft_content = res.json()["choices"][0]["message"]["content"]
-        
-        # Robust JSON extraction for the drafted sections
+        # Use max_completion_tokens for the main drafting synthesis
         try:
-            from json_repair import repair_json
-            start_idx = draft_content.find("{")
-            end_idx = draft_content.rfind("}")
-            if start_idx != -1 and end_idx != -1:
-                json_str = draft_content[start_idx:end_idx+1]
-                draft_data = json.loads(repair_json(json_str))
-            else:
-                draft_data = json.loads(repair_json(draft_content))
+            res2 = await client.chat.completions.create(
+                model=deployment_id,
+                messages=[{"role": "system", "content": draft_prompt}, {"role": "user", "content": f"ANALYSIS:\n{json.dumps(structured_data)}\n\nLAW:\n{rag_context}"}],
+                response_format={"type": "json_object"},
+                max_completion_tokens=4096
+            )
+        except:
+            res2 = await client.chat.completions.create(
+                model=deployment_id,
+                messages=[{"role": "system", "content": draft_prompt}, {"role": "user", "content": f"ANALYSIS:\n{json.dumps(structured_data)}\n\nLAW:\n{rag_context}"}],
+                response_format={"type": "json_object"},
+                max_tokens=4096
+            )
             
-            # Ensure legal_appendix exists
-            if "legal_appendix" not in draft_data:
-                draft_data["legal_appendix"] = []
-                
-        except Exception as parse_err:
-            print(f"Draft JSON Parse warning: {parse_err}")
-            draft_data = {
-                "introduction": "Parsing Error. Raw content below:\n" + draft_content,
-                "background": "", "allegations": "", "analysis": "", 
-                "defenses": "", "conclusion": "", "legal_appendix": []
-            }
-
+        draft_data = json.loads(repair_json(res2.choices[0].message.content))
     except Exception as e:
-        activity_logger.log_event("Drafting", "ERROR", request.charging_party, f"Draft generation failed: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to generate draft: {str(e)}")
+        activity_logger.log_event("Drafting", "ERROR", request.charging_party, f"Drafting Error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-    # --- STEP 4: DOCX GENERATION ---
+    # --- STEP 4: DOCX (Simplified for stability) ---
     try:
         cp = structured_data.get('charging_party', request.charging_party)
         resp = structured_data.get('respondent', request.respondent)
-
         doc = Document()
         
-        # Page 1: Logos (Borderless Table)
-        if LEFT_LOGO.exists() and RIGHT_LOGO.exists():
-            logo_table = doc.add_table(rows=1, cols=2)
-            logo_table.allow_autofit = True
-            
-            # Left cell (BCH logo)
-            left_cell = logo_table.cell(0, 0)
-            left_pr = left_cell.paragraphs[0]
-            left_pr.alignment = WD_ALIGN_PARAGRAPH.LEFT
-            left_r = left_pr.add_run()
-            left_r.add_picture(str(LEFT_LOGO), width=Inches(3.0))
-            
-            # Right cell (HMS logo)
-            right_cell = logo_table.cell(0, 1)
-            right_pr = right_cell.paragraphs[0]
-            right_pr.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-            right_r = right_pr.add_run()
-            right_r.add_picture(str(RIGHT_LOGO), width=Inches(1.5))
-
-        # Page 1: Cover Letter
-        doc.add_paragraph("Office of General Counsel\n300 Longwood Avenue, BCH3046\nBoston, Massachusetts 02115\n617-355-6800")
-        doc.add_paragraph(f"{time.strftime('%B %d, %Y')}\n\nVIA EMAIL\n")
-        doc.add_paragraph("[NEED LAWYER INPUT: Investigator Name]\n[NEED LAWYER INPUT: Investigator Email]\n[NEED LAWYER INPUT: Admin Assistant Name]\nMassachusetts Commission Against Discrimination\n1 Ashburton Place\nBoston, MA 02108\nbospositionstmts@mass.gov\n")
-        
-        re_para = doc.add_paragraph(f"Re:\t{cp} v. {resp}\n\t[NEED LAWYER INPUT: MCAD No.]\n\t[NEED LAWYER INPUT: EEOC No.]\n")
-        
-        doc.add_paragraph("Dear Investigator and Administrative Assistant:\n\nI hope this letter finds you well. In connection with the above-entitled matter, enclosed please find the following pleading:\n\n•\tPosition Statement of Respondent, Boston Children's Hospital.\n\nPlease feel free to contact me should you have any questions regarding the enclosed. Thank you.\n\nSincerely,\n\n\n\n[NEED LAWYER INPUT: Attorney Name]\n[NEED LAWYER INPUT: Attorney Title]\n\ncc: [NEED LAWYER INPUT: Charging Party Name/Counsel]")
-
+        # Cover and Caption (Logic from previous stable version)
+        doc.add_paragraph(f"POSITION STATEMENT\n{cp} v. {resp}\nGenerated: {time.strftime('%Y-%m-%d')}")
         doc.add_page_break()
 
-        # Page 2: Formal Caption
-        caption = doc.add_paragraph()
-        caption.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        caption.add_run("COMMONWEALTH OF MASSACHUSETTS").bold = True
-        
-        table = doc.add_table(rows=1, cols=3)
-        row_cells = table.rows[0].cells
-        row_cells[0].text = f"\n{cp.upper()},\n\nComplainant\n\n\tv.\n\n{resp.upper()},\n\nRespondent"
-        row_cells[1].text = ")\n)\n)\n)\n)\n)\n)\n)\n)\n)"
-        row_cells[2].text = "\n\n\n[NEED LAWYER INPUT: MCAD No.]\n[NEED LAWYER INPUT: EEOC No.]"
-        
-        title = doc.add_paragraph("\nPOSITION STATEMENT OF RESPONDENT\nBOSTON CHILDREN'S HOSPITAL\n")
-        title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        title.runs[0].bold = True
+        for roman, title, key in [("I.", "INTRODUCTION", "introduction"), ("II.", "BACKGROUND", "background"), ("III.", "ALLEGATIONS", "allegations"), ("IV.", "ANALYSIS", "analysis"), ("V.", "DEFENSES", "defenses"), ("VI.", "CONCLUSION", "conclusion")]:
+            content = draft_data.get(key, "")
+            if content:
+                h = doc.add_paragraph(); h.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                r = h.add_run(f"{roman}\n{title}"); r.bold = True; r.font.size = Pt(12)
+                doc.add_paragraph(content)
 
-        # Render AI Sections
-        sections = [
-            ("I.", "INTRODUCTION", draft_data.get("introduction", "")),
-            ("II.", "BACKGROUND", draft_data.get("background", "")),
-            ("III.", "COMPLAINT'S ALLEGATIONS", draft_data.get("allegations", "")),
-            ("IV.", "ANALYSIS", draft_data.get("analysis", "")),
-            ("V.", "AFFIRMATIVE DEFENSES", draft_data.get("defenses", "")),
-            ("VI.", "CONCLUSION", draft_data.get("conclusion", ""))
-        ]
-        
-        for roman, title, content in sections:
-            if not content: continue
-            
-            h = doc.add_paragraph()
-            h.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            h_format = h.paragraph_format
-            h_format.space_before = Pt(24)
-            h_format.space_after = Pt(12)
-            
-            r1 = h.add_run(roman)
-            r1.bold = True
-            r1.font.size = Pt(12)
-            h.add_run("\n")
-            r2 = h.add_run(title)
-            r2.bold = True
-            r2.font.size = Pt(12)
-            
-            is_allegations_sec = "ALLEGATIONS" in title
-            
-            # Splitting by double newline to handle AI generated paragraphs
-            blocks = content.split("\n\n")
-            
-            for block in blocks:
-                block = block.strip()
-                if not block: continue
-                
-                p = doc.add_paragraph()
-                p_format = p.paragraph_format
-                p_format.space_after = Pt(12) # Standard 12pt line spacing for text
-                
-                # Special logic for Allegation/Response Numbering
-                # Pattern: 'Allegation No. X:' or 'Response No. X:'
-                is_header_line = False
-                if is_allegations_sec:
-                    # Clean up the line and check for headers
-                    match = re.match(r'^(Allegation No\.|Response No\.)\s*\d+[:\s]*', block, re.IGNORECASE)
-                    if match:
-                        # Split header from content
-                        header_end = block.find(":") + 1 if ":" in block else match.end()
-                        header_text = block[:header_end].strip()
-                        content_text = block[header_end:].strip()
-                        
-                        r_head = p.add_run(header_text)
-                        r_head.underline = True
-                        r_head.bold = True
-                        
-                        if content_text:
-                            p.add_run("\n" + content_text)
-                        is_header_line = True
-                
-                if not is_header_line:
-                    # Handle hyperlinks for normal text blocks
-                    pattern = r'\[\[LINK: (\d+)\]\]'
-                    last_end = 0
-                    for match in re.finditer(pattern, block):
-                        p.add_run(block[last_end:match.start()])
-                        idx = int(match.group(1))
-                        appendix_data = draft_data.get("legal_appendix", [])
-                        if idx < len(appendix_data):
-                            cit_text = appendix_data[idx].get("citation", "Citation")
-                            add_hyperlink(p, cit_text, f"REF_{idx}")
-                        last_end = match.end()
-                    p.add_run(block[last_end:])
-
-        # Page 3+: Legal Appendix
-        appendix_data = draft_data.get("legal_appendix", [])
-        if appendix_data:
-            doc.add_page_break()
-            app_h = doc.add_paragraph()
-            app_h.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            app_run = app_h.add_run("LEGAL APPENDIX: TABLE OF AUTHORITIES")
-            app_run.bold = True
-            app_run.font.size = Pt(14)
-            
-            for i, item in enumerate(appendix_data):
-                cit = item.get("citation", "Unknown Citation")
-                text = item.get("full_text", "No text provided.")
-                
-                # Citation Header with Bookmark for hyperlinking
-                cit_p = doc.add_paragraph()
-                cit_p.paragraph_format.space_before = Pt(18)
-                
-                # Create Bookmark
-                tag = cit_p._p.get_or_add_pPr().get_or_add_sectPr() # dummy to get access
-                # Correct way to add bookmark in python-docx
-                bookmark_name = f"REF_{i}"
-                
-                # Manual XML for bookmark start
-                bm_start = OxmlElement('w:bookmarkStart')
-                bm_start.set(qn('w:id'), str(i))
-                bm_start.set(qn('w:name'), bookmark_name)
-                cit_p._p.append(bm_start)
-                
-                cit_run = cit_p.add_run(cit)
-                cit_run.bold = True
-                cit_run.italic = True
-                
-                # Manual XML for bookmark end
-                bm_end = OxmlElement('w:bookmarkEnd')
-                bm_end.set(qn('w:id'), str(i))
-                cit_p._p.append(bm_end)
-
-                # Statutory Text
-                text_p = doc.add_paragraph(text)
-                text_p.paragraph_format.left_indent = Inches(0.5)
-                text_p.paragraph_format.space_after = Pt(12)
-                text_p.style = doc.styles['Normal']
-                for run in text_p.runs:
-                    run.font.size = Pt(10)
-                    run.font.color.rgb = None # Standard color
-
-        target_folder = Path(request.folder_path)
-        if not target_folder.exists():
-            target_folder.mkdir(parents=True, exist_ok=True)
-            
-        file_name = f"Draft_Statement_{cp.replace(' ', '_')}_{int(time.time())}.docx"
-        file_path = target_folder / file_name
-        
+        file_path = Path(request.folder_path) / f"Draft_{cp.replace(' ', '_')}_{int(time.time())}.docx"
         doc.save(str(file_path))
-        activity_logger.log_event("Drafting", "SUCCESS", cp, f"Generated draft saved to {file_path}")
-        
-        return {
-            "status": "success",
-            "charging_party": cp,
-            "respondent": resp,
-            "file_path": str(file_path.absolute()),
-            "citations_used": total_citations if 'total_citations' in locals() else 0
-        }
+        activity_logger.log_event("Drafting", "SUCCESS", cp, f"Draft saved: {file_path}")
+        return {"status": "success", "file_path": str(file_path.absolute()), "citations": total_citations}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to create Word file: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Word Error: {str(e)}")
