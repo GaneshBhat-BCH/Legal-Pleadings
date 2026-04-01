@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, List
 import os
 import json
 import base64
@@ -32,7 +32,7 @@ def preprocess_text(text: str) -> str:
 @router.post("/extract")
 async def extract_allegations(request: ExtractionRequest):
     target = request.file_id or request.file_path
-    activity_logger.log_event("Extraction", "START", target, "Executing Optimized Multimodal Extraction (Vision Primary)")
+    activity_logger.log_event("Extraction", "START", target, "Executing Optimized Multimodal Extraction (Drafting-Aligned)")
     
     # Credentials from Settings
     api_key = settings.AZURE_OPENAI_API_KEY
@@ -40,8 +40,7 @@ async def extract_allegations(request: ExtractionRequest):
     aoai_base = raw_endpoint.split("/openai")[0] if "/openai" in raw_endpoint else raw_endpoint
     api_version = re.search(r'api-version=([^&]+)', raw_endpoint).group(1) if "api-version=" in raw_endpoint else "2025-01-01-preview"
     
-    # Deployment Resolution
-    deployment_id = "gpt-4o" # default to a known vision-capable model
+    deployment_id = "gpt-4o" 
     if "/deployments/" in raw_endpoint:
         deployment_id = raw_endpoint.split("/deployments/")[1].split("/")[0]
 
@@ -50,14 +49,12 @@ async def extract_allegations(request: ExtractionRequest):
     try:
         raw_result = None
         
-        # --- PHASE 1: CHAT COMPLETION VISION OCR (PROVEN PATH) ---
+        # --- PHASE 1: CHAT COMPLETION VISION OCR (PRIMARY PATH FOR SCANS) ---
         if request.file_path and os.path.exists(request.file_path):
             try:
-                activity_logger.log_event("Extraction", "INFO", request.file_path, "Phase 1: Local Vision capture for Chat Completion")
-                
+                activity_logger.log_event("Extraction", "INFO", request.file_path, "Phase 1: Local Vision capture")
                 doc = fitz.open(request.file_path)
                 base64_images = []
-                # Use slightly smaller matrix (1.5x) for better Azure quota compatibility
                 zoom_matrix = fitz.Matrix(1.5, 1.5)
                 for i in range(min(len(doc), 5)):
                     page = doc.load_page(i)
@@ -65,33 +62,24 @@ async def extract_allegations(request: ExtractionRequest):
                     base64_images.append(base64.b64encode(pix.tobytes("png")).decode("utf-8"))
                 doc.close()
 
-                content_items = [{"type": "text", "text": "Extract text faithfully from these legal scans."}]
+                content_items = [{"type": "text", "text": "Extract every numbered allegation verbatim from these scans. Do not summarize or add headings."}]
                 for b64 in base64_images:
                     content_items.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}", "detail": "auto"}})
 
-                # Try with gpt-4o first (Vision leader), then fallback to current deployment
-                for model_candidate in ["gpt-4o", deployment_id]:
-                    try:
-                        response = await client.chat.completions.create(
-                            model=model_candidate,
-                            messages=[{"role": "user", "content": content_items}],
-                            max_completion_tokens=4096
-                        )
-                        raw_result = response.choices[0].message.content
-                        if raw_result: break
-                    except: pass
-                
-                if raw_result:
-                    activity_logger.log_event("Extraction", "SUCCESS", target, f"Vision OCR Success using {model_candidate}.")
+                response = await client.chat.completions.create(
+                    model=deployment_id,
+                    messages=[{"role": "user", "content": content_items}],
+                    max_completion_tokens=4096
+                )
+                raw_result = response.choices[0].message.content
+                activity_logger.log_event("Extraction", "SUCCESS", target, "Vision capture complete.")
             except Exception as e:
-                activity_logger.log_event("Extraction", "ERROR", target, f"Vision Phase failed: {str(e)}")
+                activity_logger.log_event("Extraction", "ERROR", target, f"Vision Phase failure: {str(e)}")
 
-        # --- PHASE 2: NATIVE ASSISTANTS (The Backup/User-Requested Legacy logic) ---
+        # --- PHASE 2: NATIVE ASSISTANTS (BACKUP/FILE_ID) ---
         if not raw_result and (request.file_id or request.file_path):
             try:
-                activity_logger.log_event("Extraction", "INFO", target, "Phase 2: Native Assistant/Files Fallback")
-                
-                # Use existing file_id or upload one
+                activity_logger.log_event("Extraction", "INFO", target, "Phase 2: Native Assistant Fallback")
                 file_id = request.file_id
                 if not file_id and request.file_path:
                     with open(request.file_path, "rb") as f:
@@ -100,45 +88,52 @@ async def extract_allegations(request: ExtractionRequest):
                 
                 if file_id:
                     thread = await client.beta.threads.create(
-                        messages=[{"role": "user", "content": "Extract allegations.", "attachments": [{"file_id": file_id, "tools": [{"type": "file_search"}]}]}]
+                        messages=[{"role": "user", "content": "Extract every numbered paragraph into a list.", "attachments": [{"file_id": file_id, "tools": [{"type": "file_search"}]}]}]
                     )
                     run = await client.beta.threads.runs.create(thread_id=thread.id, assistant_id=deployment_id, max_completion_tokens=4096)
                     while run.status in ["queued", "in_progress"]:
                         await asyncio.sleep(2)
                         run = await client.beta.threads.runs.retrieve(thread_id=thread.id, run_id=run.id)
-                    
                     if run.status == "completed":
                         msgs = await client.beta.threads.messages.list(thread_id=thread.id)
                         raw_result = msgs.data[0].content[0].text.value
             except: pass
 
         if not raw_result:
-            raise Exception("All multimodality paths (Vision OCR, Assistants API) are restricted on this resource.")
+            raise Exception("All multimodality paths (Vision OCR, Assistants API) failed on this resource.")
 
-        # --- PHASE 3: FINAL REFINEMENT & PARSING ---
-        clean_data = preprocess_text(raw_result)
-        refine_prompt = "[SENIOR LEGAL DATA ENGINEER] Format into 6-section JSON list."
+        # --- PHASE 3: DRAFTING-ALIGNED REFINEMENT (FIX FOR USER) ---
+        clean_text = preprocess_text(raw_result)
+        # Restore the specific 'points' schema that generate_position_draft expects (drafting_generator.py line 87)
+        refine_prompt = """[SENIOR LEGAL DATA ENGINEER] Format this legal text into a strict JSON object with a list titled 'points'. 
+Each point must contain: 
+1. 'paragraph_number' (e.g. "1", "2")
+2. 'allegation_text' (The verbatim text of that paragraph)
+3. 'legal_category' (Default to 'General Employment Law' unless it's clearly Sex, Race, or Disability)
+
+Respond with ONLY the JSON object. Do not include summaries or other sections."""
         
         try:
-             res_f = await client.chat.completions.create(
+             res_final = await client.chat.completions.create(
                 model=deployment_id,
-                messages=[{"role": "system", "content": refine_prompt}, {"role": "user", "content": clean_data}],
+                messages=[{"role": "system", "content": refine_prompt}, {"role": "user", "content": clean_text}],
                 response_format={"type": "json_object"},
                 max_completion_tokens=4096
              )
         except:
-             res_f = await client.chat.completions.create(
+             res_final = await client.chat.completions.create(
                 model=deployment_id,
-                messages=[{"role": "system", "content": refine_prompt}, {"role": "user", "content": clean_data}],
+                messages=[{"role": "system", "content": refine_prompt}, {"role": "user", "content": clean_text}],
                 response_format={"type": "json_object"},
                 max_tokens=4096
              )
         
-        f_content = res_f.choices[0].message.content
-        j_match = re.search(r'(\{.*\})', f_content.replace('\\n', '').replace('\\r', ''), re.DOTALL)
+        final_content = res_final.choices[0].message.content
+        json_match = re.search(r'(\{.*\})', final_content.replace('\\n', '').replace('\\r', ''), re.DOTALL)
         
-        return JSONResponse(content=json.loads(repair_json(j_match.group(1) if j_match else f_content)))
+        activity_logger.log_event("Extraction", "SUCCESS", target, "Extraction Complete (Drafting Schema Aligned).")
+        return JSONResponse(content=json.loads(repair_json(json_match.group(1) if json_match else final_content)))
 
     except Exception as e:
-        activity_logger.log_event("Extraction", "ERROR", target, f"Pipeline Failure: {str(e)}")
+        activity_logger.log_event("Extraction", "ERROR", target, f"Pipeline Error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
