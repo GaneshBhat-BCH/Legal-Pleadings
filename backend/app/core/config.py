@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     # Azure OpenAI
     AZURE_OPENAI_API_KEY: str
     AZURE_OPENAI_ENDPOINT: str
+    AZURE_OPENAI_MODEL: str = "gpt-5.4-mini"
     AZURE_OPENAI_EMBEDDING_ENDPOINT: str
     AZURE_OPENAI_EMBEDDING_API_KEY: str # Added for separate embedding resource
     OPENAI_API_VERSION: str = "2025-01-01-preview"

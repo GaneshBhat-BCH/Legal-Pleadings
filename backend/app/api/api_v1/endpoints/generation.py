@@ -38,8 +38,7 @@ async def generate_statement(request: GenerationRequest):
     activity_logger.log_event("Generation", "START", party_name, f"Generating Position Statement based on {len(request.allegations_list)} allegations.")
     
     api_key = settings.AZURE_OPENAI_API_KEY
-    endpoint = settings.AZURE_OPENAI_ENDPOINT
-    deployment_name = "gpt-5"
+    deployment_name = settings.AZURE_OPENAI_MODEL
     
     # 1. Prepare RAG Context
     # We aggregate text from the allegations to query the vector store
@@ -88,10 +87,7 @@ Categories: {request.document_metadata.all_detected_categories}
     user_prompt += f"\n\n[RELEVANT LAW VIA RAG]\n{rag_context}\n"
 
     # Call Azure OpenAI Chat Completions using exact endpoint
-    if "chat/completions" in settings.AZURE_OPENAI_ENDPOINT:
-        chat_url = settings.AZURE_OPENAI_ENDPOINT
-    else:
-        chat_url = f"{settings.AZURE_OPENAI_ENDPOINT.rstrip('/')}/openai/deployments/{deployment_name}/chat/completions?api-version=2024-05-01-preview"
+        chat_url = f"{settings.AZURE_OPENAI_ENDPOINT.rstrip('/')}/openai/deployments/{deployment_name}/chat/completions?api-version={settings.OPENAI_API_VERSION}"
     
     headers = {
         "api-key": api_key,

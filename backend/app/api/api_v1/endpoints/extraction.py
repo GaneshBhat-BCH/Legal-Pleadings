@@ -29,10 +29,28 @@ def preprocess_text(text: str) -> str:
         processed_text = re.sub(pattern, replacement, processed_text, flags=re.IGNORECASE)
     return processed_text
 
+def validate_extraction_format(data: dict) -> bool:
+    """Verifies that the required keys for the user's CSV script are present."""
+    required_top_keys = ["document_metadata", "allegations_list", "defense_and_proofs"]
+    for key in required_top_keys:
+        if key not in data: return False
+    
+    if not data["allegations_list"] or not isinstance(data["allegations_list"], list): return False
+    
+    # Check first item for critical CSV keys
+    first_item = data["allegations_list"][0]
+    if "point_number" not in first_item or "allegation_text" not in first_item: return False
+    
+    if data["defense_and_proofs"]:
+        first_defense = data["defense_and_proofs"][0]
+        if "point_ref" not in first_defense or "defense_argument" not in first_defense: return False
+        
+    return True
+
 @router.post("/extract")
 async def extract_allegations(request: ExtractionRequest):
     target = request.file_id or request.file_path
-    activity_logger.log_event("Extraction", "START", target, "Executing Fully Restored a6a73fa REST Native Logic")
+    activity_logger.log_event("Extraction", "START", target, "Executing Cross-System Aligned Extraction (CSV Support)")
     
     # Credentials from Settings
     api_key = settings.AZURE_OPENAI_API_KEY
@@ -40,80 +58,105 @@ async def extract_allegations(request: ExtractionRequest):
     resource_base = raw_endpoint.split("/openai")[0] if "/openai" in raw_endpoint else raw_endpoint
     api_version = re.search(r'api-version=([^&]+)', raw_endpoint).group(1) if "api-version=" in raw_endpoint else "2025-01-01-preview"
     
-    deployment_id = "gpt-5.4-mini" 
-    if "/deployments/" in raw_endpoint:
-        deployment_id = raw_endpoint.split("/deployments/")[1].split("/")[0]
+    deployment_id = settings.AZURE_OPENAI_MODEL
 
-    # PASS 1: NATIVE REST API (Commit a6a73fa)
-    responses_url = f"{resource_base}/openai/v1/responses?api-version={api_version}"
-    
     try:
         raw_result = None
         
-        # Use existing file_id or upload one
+        # --- PASS 1: NATIVE REST API (VERBATIM CAPTURE) ---
+        responses_url = f"{resource_base}/openai/v1/responses?api-version={api_version}"
         file_id = request.file_id
         if not file_id and request.file_path:
-            # We still use the SDK for File Upload as it's more stable
-            temp_client = AsyncAzureOpenAI(azure_endpoint=resource_base, api_key=api_key, api_version=api_version)
-            with open(request.file_path, "rb") as f:
-                f_obj = await temp_client.files.create(file=f, purpose="assistants")
-                file_id = f_obj.id
-            await temp_client.close()
+            async with AsyncAzureOpenAI(azure_endpoint=resource_base, api_key=api_key, api_version=api_version) as temp_client:
+                with open(request.file_path, "rb") as f:
+                    f_obj = await temp_client.files.create(file=f, purpose="assistants")
+                    file_id = f_obj.id
 
         if file_id:
-            activity_logger.log_event("Extraction", "INFO", target, f"Pass 1: Native REST capture via {deployment_id}")
-            # The EXACT payload from a6a73fa logic but with current model
             raw_payload = {
                 "model": deployment_id,
-                "input": [{"role": "user", "content": [{"type": "input_text", "text": "Extract all text from this legal document faithfully."}, {"type": "input_file", "file_id": file_id}]}],
+                "input": [{"role": "user", "content": [{"type": "input_text", "text": "Extract all text verbatim."}, {"type": "input_file", "file_id": file_id}]}],
                 "max_completion_tokens": 4096
             }
-            
-            headers = {"api-key": api_key, "Content-Type": "application/json"}
-            raw_res = requests.post(responses_url, headers=headers, json=raw_payload, timeout=1200)
-            
-            if raw_res.status_code == 200:
-                res_data = raw_res.json()
-                # Parse the /v1/responses format (as used 3 days ago)
-                if "output" in res_data:
-                    for item in res_data["output"]:
-                        if "role" in item and item["role"] == "assistant":
-                            for content in item["content"]:
-                                if "text" in content:
-                                    raw_result = content["text"]
-            else:
-                activity_logger.log_event("Extraction", "ERROR", target, f"REST Phase failed: {raw_res.text}")
+            res_rest = requests.post(responses_url, headers={"api-key": api_key, "Content-Type": "application/json"}, json=raw_payload, timeout=1200)
+            if res_rest.status_code == 200:
+                out = res_rest.json().get("output", [])
+                for item in out:
+                    if item.get("role") == "assistant":
+                        for c in item.get("content", []):
+                            if "text" in c: raw_result = c["text"]
 
-        # Vision Fallback if Native REST fails
+        # Vision Fallback
         if not raw_result and request.file_path:
             import fitz
             doc = fitz.open(request.file_path)
             pix = doc[0].get_pixmap(matrix=fitz.Matrix(2.0, 2.0))
             b64 = base64.b64encode(pix.tobytes("png")).decode("utf-8")
             doc.close()
-            
-            async with AsyncAzureOpenAI(azure_endpoint=resource_base, api_key=api_key, api_version=api_version) as client:
-                res_v = await client.chat.completions.create(model=deployment_id, messages=[{"role": "user", "content": [{"type": "text", "text": "Extract text faithfully."}, {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}}]}], max_completion_tokens=4096)
+            async with AsyncAzureOpenAI(azure_endpoint=resource_base, api_key=api_key, api_version=api_version) as cl:
+                res_v = await cl.chat.completions.create(model=deployment_id, messages=[{"role": "user", "content": [{"type": "text", "text": "Extract text verbatim."}, {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}}]}], max_completion_tokens=4096)
                 raw_result = res_v.choices[0].message.content
 
         if not raw_result:
-            raise Exception("Total Native Extraction failed.")
+            raise Exception("Capture failed.")
 
-        # PASS 2: STRUCTURED REFINEMENT (SDK)
-        activity_logger.log_event("Extraction", "INFO", target, "Pass 2: Structured Logic Restoration")
+        # --- PASS 2: STRUCTURED REFINEMENT (CSV-CONVERSION ALIGNMENT) ---
         clean_text = preprocess_text(raw_result)
-        system_prompt = """[SENIOR LEGAL DATA ENGINEER] Extract allegations from the sanitized text into JSON structure. Follow the strict 6-section metadata format. Ensure points contain 'paragraph_number', 'allegation', 'lawyer_note', and 'legal_category'."""
         
-        async with AsyncAzureOpenAI(azure_endpoint=resource_base, api_key=api_key, api_version=api_version) as client_s:
-            try:
-                 res_f = await client_s.chat.completions.create(model=deployment_id, messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": f"CLEAN DATA:\n{clean_text}"}], response_format={"type": "json_object"}, max_completion_tokens=4096)
-            except:
-                 res_f = await client_s.chat.completions.create(model=deployment_id, messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": f"CLEAN DATA:\n{clean_text}"}], response_format={"type": "json_object"}, max_tokens=4096)
-            
-            final_content = res_f.choices[0].message.content
-        
-        json_match = re.search(r'(\{.*\})', final_content.replace('\\n', '').replace('\\r', ''), re.DOTALL)
-        return JSONResponse(content=json.loads(repair_json(json_match.group(1) if json_match else final_content)))
+        system_prompt = """[SENIOR LEGAL DATA ENGINEER] Format this legal text into a strict JSON object.
+You must harvest EVERY possible allegation. Do not miss any paragraph or sentence.
+
+Return exactly this structure:
+{
+  "document_metadata": {
+    "charging_party": "Name",
+    "respondent": "Name",
+    "date_filed": "Date",
+    "all_detected_categories": ["List"],
+    "legal_case_summary": "Summary"
+  },
+  "allegations_list": [
+    {
+      "point_number": "1",
+      "allegation_text": "Verbatim text",
+      "legal_category": "Category"
+    }
+  ],
+  "defense_and_proofs": [
+    {
+      "point_ref": "1", 
+      "defense_argument": "Recommended defense argument",
+      "suggested_proofs": ["Proof 1", "Proof 2"]
+    }
+  ]
+}
+
+Respond ONLY with the JSON object. Do not summarize or explain."""
+
+        final_json = None
+        for attempt in range(2): # Max 2 attempts for format correctness
+            activity_logger.log_event("Extraction", "INFO", target, f"Pass 2: Structured Logic (Attempt {attempt+1})")
+            async with AsyncAzureOpenAI(azure_endpoint=resource_base, api_key=api_key, api_version=api_version) as cl_s:
+                try: # Try newer parameter
+                     res_f = await cl_s.chat.completions.create(model=deployment_id, messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": f"DATA:\n{clean_text}"}], response_format={"type": "json_object"}, max_completion_tokens=4096)
+                except: # Fallback for older SDK
+                     res_f = await cl_s.chat.completions.create(model=deployment_id, messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": f"DATA:\n{clean_text}"}], response_format={"type": "json_object"}, max_tokens=4096)
+                
+                content = res_f.choices[0].message.content
+                match = re.search(r'(\{.*\})', content.replace('\\n', '').replace('\\r', ''), re.DOTALL)
+                parsed_data = json.loads(repair_json(match.group(1) if match else content))
+                
+                if validate_extraction_format(parsed_data):
+                    final_json = parsed_data
+                    break
+                else:
+                    activity_logger.log_event("Extraction", "WARNING", target, "Format mismatch, retrying...")
+
+        if not final_json:
+            raise Exception("Failed to produce validated JSON schema after 2 attempts.")
+
+        activity_logger.log_event("Extraction", "SUCCESS", target, "Final Schema Aligned Extraction Success.")
+        return JSONResponse(content=final_json)
 
     except Exception as e:
         activity_logger.log_event("Extraction", "ERROR", target, f"Pipeline Error: {str(e)}")

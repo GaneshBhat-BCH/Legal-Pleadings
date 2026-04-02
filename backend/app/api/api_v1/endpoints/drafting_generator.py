@@ -47,9 +47,7 @@ async def generate_position_draft(request: CombinedDraftRequest):
     resource_base = raw_endpoint.split("/openai")[0] if "/openai" in raw_endpoint else raw_endpoint
     api_version = re.search(r'api-version=([^&]+)', raw_endpoint).group(1) if "api-version=" in raw_endpoint else "2025-01-01-preview"
     
-    deployment_id = "gpt-5.4-mini" 
-    if "/deployments/" in raw_endpoint:
-        deployment_id = raw_endpoint.split("/deployments/")[1].split("/")[0]
+    deployment_id = settings.AZURE_OPENAI_MODEL
 
     client = AsyncAzureOpenAI(azure_endpoint=resource_base, api_key=api_key, api_version=api_version)
 
