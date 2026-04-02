@@ -140,6 +140,7 @@ Return exactly this structure:
 Respond ONLY with the JSON object."""
 
         final_json = None
+        parsed_data = None
         for attempt in range(2):
             activity_logger.log_event("Extraction", "INFO", target, f"Refinement Pass (Attempt {attempt+1})")
             async with AsyncAzureOpenAI(azure_endpoint=resource_base, api_key=api_key, api_version=api_version) as cl_s:
@@ -149,8 +150,20 @@ Respond ONLY with the JSON object."""
                      res_f = await cl_s.chat.completions.create(model=deployment_id, messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": f"DATA:\n{masked_text}"}], response_format={"type": "json_object"}, max_tokens=4096)
                 
                 content = res_f.choices[0].message.content
-                match = re.search(r'(\{.*\})', content.replace('\\n', '').replace('\\r', ''), re.DOTALL)
-                parsed_data = json.loads(repair_json(match.group(1) if match else content))
+                if not content:
+                    activity_logger.log_event("Extraction", "WARNING", target, "LLM returned empty content.")
+                    continue
+                
+                try:
+                    match = re.search(r'(\{.*\})', content, re.DOTALL)
+                    json_str = match.group(1) if match else content
+                    repaired_str = repair_json(json_str)
+                    if not repaired_str:
+                        raise ValueError("repair_json returned empty string.")
+                    parsed_data = json.loads(repaired_str)
+                except Exception as parse_e:
+                    activity_logger.log_event("Extraction", "WARNING", target, f"Parse Error: {str(parse_e)}. Content snippet: {content[:200]}")
+                    continue
                 
                 if validate_extraction_format(parsed_data):
                     final_json = parsed_data
@@ -158,7 +171,7 @@ Respond ONLY with the JSON object."""
         
         if not final_json:
             activity_logger.log_event("Extraction", "WARNING", target, "Returning unvalidated JSON schema.")
-            final_json = parsed_data
+            final_json = parsed_data if parsed_data else {}
 
         activity_logger.log_event("Extraction", "SUCCESS", target, "Final Extraction Success.")
         return JSONResponse(content=final_json)
