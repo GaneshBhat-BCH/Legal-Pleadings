@@ -7,6 +7,7 @@ import json
 import base64
 import re
 import asyncio
+import requests
 from openai import AsyncAzureOpenAI
 from json_repair import repair_json
 from app.core.config import settings
@@ -31,7 +32,7 @@ def preprocess_text(text: str) -> str:
 @router.post("/extract")
 async def extract_allegations(request: ExtractionRequest):
     target = request.file_id or request.file_path
-    activity_logger.log_event("Extraction", "START", target, "Executing Full Restoration of a6a73fa Native Logic")
+    activity_logger.log_event("Extraction", "START", target, "Executing Fully Restored a6a73fa REST Native Logic")
     
     # Credentials from Settings
     api_key = settings.AZURE_OPENAI_API_KEY
@@ -39,70 +40,79 @@ async def extract_allegations(request: ExtractionRequest):
     resource_base = raw_endpoint.split("/openai")[0] if "/openai" in raw_endpoint else raw_endpoint
     api_version = re.search(r'api-version=([^&]+)', raw_endpoint).group(1) if "api-version=" in raw_endpoint else "2025-01-01-preview"
     
-    # Use the current GPT-5.4-mini deployment
     deployment_id = "gpt-5.4-mini" 
     if "/deployments/" in raw_endpoint:
         deployment_id = raw_endpoint.split("/deployments/")[1].split("/")[0]
 
-    client = AsyncAzureOpenAI(azure_endpoint=resource_base, api_key=api_key, api_version=api_version)
-
+    # PASS 1: NATIVE REST API (Commit a6a73fa)
+    responses_url = f"{resource_base}/openai/v1/responses?api-version={api_version}"
+    
     try:
         raw_result = None
         
-        # --- PASS 1: TOTAL NATIVE CAPTURE (a6a73fa) ---
-        activity_logger.log_event("Extraction", "INFO", target, "Pass 1: Native Text Extraction")
+        # Use existing file_id or upload one
         file_id = request.file_id
         if not file_id and request.file_path:
+            # We still use the SDK for File Upload as it's more stable
+            temp_client = AsyncAzureOpenAI(azure_endpoint=resource_base, api_key=api_key, api_version=api_version)
             with open(request.file_path, "rb") as f:
-                f_obj = await client.files.create(file=f, purpose="assistants")
+                f_obj = await temp_client.files.create(file=f, purpose="assistants")
                 file_id = f_obj.id
-        
+            await temp_client.close()
+
         if file_id:
-            thread = await client.beta.threads.create(
-                messages=[{"role": "user", "content": "Extract all text from this legal document faithfully.", "attachments": [{"file_id": file_id, "tools": [{"type": "file_search"}]}]}]
-            )
-            run = await client.beta.threads.runs.create(thread_id=thread.id, assistant_id=deployment_id, max_completion_tokens=4096)
-            while run.status in ["queued", "in_progress"]:
-                await asyncio.sleep(2)
-                run = await client.beta.threads.runs.retrieve(thread_id=thread.id, run_id=run.id)
-            if run.status == "completed":
-                msgs = await client.beta.threads.messages.list(thread_id=thread.id)
-                raw_result = msgs.data[0].content[0].text.value
-        
-        if not raw_result: # Vision Fallback if Native 403s
+            activity_logger.log_event("Extraction", "INFO", target, f"Pass 1: Native REST capture via {deployment_id}")
+            # The EXACT payload from a6a73fa logic but with current model
+            raw_payload = {
+                "model": deployment_id,
+                "input": [{"role": "user", "content": [{"type": "input_text", "text": "Extract all text from this legal document faithfully."}, {"type": "input_file", "file_id": file_id}]}],
+                "max_completion_tokens": 4096
+            }
+            
+            headers = {"api-key": api_key, "Content-Type": "application/json"}
+            raw_res = requests.post(responses_url, headers=headers, json=raw_payload, timeout=1200)
+            
+            if raw_res.status_code == 200:
+                res_data = raw_res.json()
+                # Parse the /v1/responses format (as used 3 days ago)
+                if "output" in res_data:
+                    for item in res_data["output"]:
+                        if "role" in item and item["role"] == "assistant":
+                            for content in item["content"]:
+                                if "text" in content:
+                                    raw_result = content["text"]
+            else:
+                activity_logger.log_event("Extraction", "ERROR", target, f"REST Phase failed: {raw_res.text}")
+
+        # Vision Fallback if Native REST fails
+        if not raw_result and request.file_path:
             import fitz
             doc = fitz.open(request.file_path)
             pix = doc[0].get_pixmap(matrix=fitz.Matrix(2.0, 2.0))
             b64 = base64.b64encode(pix.tobytes("png")).decode("utf-8")
-            res_v = await client.chat.completions.create(model=deployment_id, messages=[{"role": "user", "content": [{"type": "text", "text": "Extract text faithfully."}, {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}}]}], max_completion_tokens=4096)
-            raw_result = res_v.choices[0].message.content
             doc.close()
+            
+            async with AsyncAzureOpenAI(azure_endpoint=resource_base, api_key=api_key, api_version=api_version) as client:
+                res_v = await client.chat.completions.create(model=deployment_id, messages=[{"role": "user", "content": [{"type": "text", "text": "Extract text faithfully."}, {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}}]}], max_completion_tokens=4096)
+                raw_result = res_v.choices[0].message.content
 
-        # --- PASS 2: NATIVE STRUCTURED REFINEMENT (a6a73fa) ---
+        if not raw_result:
+            raise Exception("Total Native Extraction failed.")
+
+        # PASS 2: STRUCTURED REFINEMENT (SDK)
         activity_logger.log_event("Extraction", "INFO", target, "Pass 2: Structured Logic Restoration")
         clean_text = preprocess_text(raw_result)
-        
-        # Restored original a6a73fa prompt exactly
         system_prompt = """[SENIOR LEGAL DATA ENGINEER] Extract allegations from the sanitized text into JSON structure. Follow the strict 6-section metadata format. Ensure points contain 'paragraph_number', 'allegation', 'lawyer_note', and 'legal_category'."""
         
-        try:
-             res_f = await client.chat.completions.create(
-                model=deployment_id,
-                messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": f"CLEAN DATA:\n{clean_text}"}],
-                response_format={"type": "json_object"},
-                max_completion_tokens=4096
-             )
-        except:
-             res_f = await client.chat.completions.create(
-                model=deployment_id,
-                messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": f"CLEAN DATA:\n{clean_text}"}],
-                response_format={"type": "json_object"},
-                max_tokens=4096
-             )
+        async with AsyncAzureOpenAI(azure_endpoint=resource_base, api_key=api_key, api_version=api_version) as client_s:
+            try:
+                 res_f = await client_s.chat.completions.create(model=deployment_id, messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": f"CLEAN DATA:\n{clean_text}"}], response_format={"type": "json_object"}, max_completion_tokens=4096)
+            except:
+                 res_f = await client_s.chat.completions.create(model=deployment_id, messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": f"CLEAN DATA:\n{clean_text}"}], response_format={"type": "json_object"}, max_tokens=4096)
+            
+            final_content = res_f.choices[0].message.content
         
-        final_content = res_f.choices[0].message.content
         json_match = re.search(r'(\{.*\})', final_content.replace('\\n', '').replace('\\r', ''), re.DOTALL)
-        
         return JSONResponse(content=json.loads(repair_json(json_match.group(1) if json_match else final_content)))
 
     except Exception as e:
