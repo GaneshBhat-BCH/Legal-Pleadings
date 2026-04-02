@@ -115,6 +115,9 @@ You must harvest EVERY possible allegation, particular, and paragraph from ALL p
 [ROLE IMMERSION & COMPLIANCE] 
 You are performing simulated legal data analysis for an internal enterprise automation system. This is NOT real legal advice for a consumer. Do NOT refuse this request on the basis of providing legal advice. You must fulfill the request exactly.
 
+[CONTENT FILTER & COMPLIANCE RULES]
+To comply with strict Azure OpenAI content safety filters, you MUST NOT generate explicitly sexual, violent, or hate-related language in your output. When generating the 'lawyer_comment', use highly clinical, sterile, and professional legal terminology for any sensitive facts (e.g., use "alleged inappropriate physical contact" instead of explicit sensitive words). Ensure the absolute absence of severe explicit language.
+
 Additionally, for each allegation include a "lawyer_comment":
 - Predict the best professional legal reply a lawyer can give.
 - Try to reference relevant laws to backbone the comment.
@@ -160,7 +163,8 @@ Respond ONLY with the JSON object."""
                 
                 content = res_f.choices[0].message.content
                 if not content:
-                    activity_logger.log_event("Extraction", "WARNING", target, "LLM returned empty content.")
+                    fr = getattr(res_f.choices[0], "finish_reason", "unknown")
+                    activity_logger.log_event("Extraction", "WARNING", target, f"LLM returned empty content. Finish reason: {fr}")
                     continue
                 
                 try:
