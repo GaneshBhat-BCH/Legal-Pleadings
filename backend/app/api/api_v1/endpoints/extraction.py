@@ -110,7 +110,12 @@ async def extract_allegations(request: ExtractionRequest):
         # --- PASS 3: STRUCTURED REFINEMENT (Masked-to-JSON) ---
         activity_logger.log_event("Extraction", "INFO", target, "Pass 3: Detailed Allegation Structuring")
         system_prompt = """[SENIOR LEGAL DATA ENGINEER] Analyze the provided legal text and return a strict JSON object. 
-You must harvest EVERY possible allegation, partucutor, and paragraph from ALL pages. Do not leave any out.
+You must harvest EVERY possible allegation, particular, and paragraph from ALL pages. Do not leave any out.
+
+Additionally, for each allegation include a "lawyer_comment":
+- Predict the best professional legal reply a lawyer can give.
+- Try to reference relevant laws to backbone the comment.
+- If unable to comment (e.g., purely factual), use exactly "[NEED LAWYERS COMMENT]".
 
 Return exactly this structure:
 {
@@ -125,7 +130,8 @@ Return exactly this structure:
     {
       "point_number": "1",
       "allegation_text": "Verbatim text",
-      "legal_category": "Category"
+      "legal_category": "Category",
+      "lawyer_comment": "Legal reply or [NEED LAWYERS COMMENT]"
     }
   ],
   "defense_and_proofs": [
