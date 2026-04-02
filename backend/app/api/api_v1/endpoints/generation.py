@@ -87,7 +87,7 @@ Categories: {request.document_metadata.all_detected_categories}
     user_prompt += f"\n\n[RELEVANT LAW VIA RAG]\n{rag_context}\n"
 
     # Call Azure OpenAI Chat Completions using exact endpoint
-        chat_url = f"{settings.AZURE_OPENAI_ENDPOINT.rstrip('/')}/openai/deployments/{deployment_name}/chat/completions?api-version={settings.OPENAI_API_VERSION}"
+    chat_url = f"{settings.AZURE_OPENAI_ENDPOINT.rstrip('/')}/openai/deployments/{deployment_name}/chat/completions?api-version={settings.OPENAI_API_VERSION}"
     
     headers = {
         "api-key": api_key,
