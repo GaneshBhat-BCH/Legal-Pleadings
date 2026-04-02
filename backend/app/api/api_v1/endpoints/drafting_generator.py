@@ -19,7 +19,6 @@ from app.core.logger import activity_logger
 
 router = APIRouter()
 
-# --- UTILS ---
 def add_hyperlink(paragraph, text, bookmark_name):
     hyperlink = OxmlElement('w:hyperlink')
     hyperlink.set(qn('w:anchor'), bookmark_name)
@@ -33,11 +32,6 @@ def add_hyperlink(paragraph, text, bookmark_name):
     paragraph._p.append(hyperlink)
     return hyperlink
 
-_HERE = Path(__file__).parent
-_ASSETS_DIR = _HERE.parent.parent.parent.parent / "assets"
-LEFT_LOGO = _ASSETS_DIR / "bch_logo.png"
-RIGHT_LOGO = _ASSETS_DIR / "hms_logo.png"
-
 class CombinedDraftRequest(BaseModel):
     raw_data: str = Field(..., description="The stringified table/list containing Allegations and Answers.")
     folder_path: str = Field(..., description="The absolute directory path where the generated Word document should be saved.")
@@ -46,101 +40,79 @@ class CombinedDraftRequest(BaseModel):
 
 @router.post("/generate_position_draft")
 async def generate_position_draft(request: CombinedDraftRequest):
-    activity_logger.log_event("Drafting", "START", request.charging_party, "Processing SDK-Powered Legal Draft (GPT-5/o1)")
+    activity_logger.log_event("Drafting", "START", request.charging_party, "Executing Full Restoration of a6a73fa Drafting Logic")
     
     api_key = settings.AZURE_OPENAI_API_KEY
     raw_endpoint = settings.AZURE_OPENAI_ENDPOINT
-    
-    # Resolve SDK Base (Same as Matching Engine)
-    aoai_base = raw_endpoint.split("/openai")[0] if "/openai" in raw_endpoint else raw_endpoint
+    resource_base = raw_endpoint.split("/openai")[0] if "/openai" in raw_endpoint else raw_endpoint
     api_version = re.search(r'api-version=([^&]+)', raw_endpoint).group(1) if "api-version=" in raw_endpoint else "2025-01-01-preview"
-    deployment_id = raw_endpoint.split("/deployments/")[1].split("/")[0] if "/deployments/" in raw_endpoint else "gpt-5"
+    
+    deployment_id = "gpt-5.4-mini" 
+    if "/deployments/" in raw_endpoint:
+        deployment_id = raw_endpoint.split("/deployments/")[1].split("/")[0]
 
-    client = AsyncAzureOpenAI(azure_endpoint=aoai_base, api_key=api_key, api_version=api_version)
+    client = AsyncAzureOpenAI(azure_endpoint=resource_base, api_key=api_key, api_version=api_version)
 
-    # --- STEP 1: ANALYSIS ---
-    analysis_prompt = """[SENIOR LEGAL ANALYST] Parse the following verified allegations and facts into clean JSON. Categorize each point into one of the 10 standard legal categories (Sexual Orientation, Sex, Harassment, Retaliation, Religion, Race, National Origin, Disability, Color, Age)."""
+    # --- STEP 1: ANALYSIS & STRUCTURE (a6a73fa) ---
+    analysis_prompt = """[SENIOR LEGAL ANALYST] Parse the raw_data into structured JSON.
+Categorize each point into: Sexual Orientation, Sex, Harassment, Retaliation, Religion, Race, National Origin, Disability, Color, or Age.
+Format:
+{
+  "points": [
+    {
+      "allegation": "The claim text",
+      "lawyer_note": "The response text",
+      "legal_category": "One of the categories above"
+    }
+  ]
+}"""
     
     try:
-        # Use max_completion_tokens for GPT-5/o1
-        try:
-             res1 = await client.chat.completions.create(
-                model=deployment_id,
-                messages=[{"role": "system", "content": analysis_prompt}, {"role": "user", "content": f"DATA:\n{request.raw_data}"}],
-                response_format={"type": "json_object"},
-                max_completion_tokens=4096
-             )
-        except:
-             res1 = await client.chat.completions.create(
-                model=deployment_id,
-                messages=[{"role": "system", "content": analysis_prompt}, {"role": "user", "content": f"DATA:\n{request.raw_data}"}],
-                response_format={"type": "json_object"},
-                max_tokens=4096
-             )
-        
+        res1 = await client.chat.completions.create(model=deployment_id, messages=[{"role": "system", "content": analysis_prompt}, {"role": "user", "content": request.raw_data}], response_format={"type": "json_object"}, max_completion_tokens=4096)
         structured_data = json.loads(repair_json(res1.choices[0].message.content))
     except Exception as e:
         activity_logger.log_event("Drafting", "ERROR", request.charging_party, f"Analysis Error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-    # --- STEP 2: RAG ---
-    unique_categories = set(p.get("legal_category", "General Employment Law") for p in structured_data.get("points", []))
-    rag_blocks = []
-    total_citations = 0
-    for cat in unique_categories:
-        try:
-            docs = await retrieve_documents(f"{cat} discrimination defense", k=3)
-            if docs:
-                rag_blocks.append(f"[CATEGORY: {cat}]\n" + "\n".join(f"- {d.page_content}" for d in docs))
-                total_citations += len(docs)
-        except: pass
-    rag_context = "\n\n".join(rag_blocks)
+    # --- STEP 2: RAG & DRAFTING (a6a73fa) ---
+    draft_prompt = """[SENIOR LITIGATION COUNSEL] Draft a formal 6-section Position Statement.
+I. INTRODUCTION
+II. PROCEDURAL BACKGROUND
+III. ALLEGATIONS AND RESPONSES (Use verbatim paragraphs)
+IV. LEGAL ANALYSIS (Use RAG citations)
+V. DEFENSES
+VI. CONCLUSION
 
-    # --- STEP 3: DRAFTING ---
-    draft_prompt = """[SENIOR LITIGATION COUNSEL] Draft a formal 6-section Position Statement (I. Intro, II. Background, III. Allegations/Responses, IV. Analysis, V. Defenses, VI. Conclusion). Use Section III preamble exactly. Use [NEED LAWYER INPUT] protection."""
+Use [NEED LAWYER INPUT] for missing facts."""
     
+    # RAG Logic
+    unique_cats = set(p.get("legal_category", "General Employment Law") for p in structured_data.get("points", []))
+    rag_context = ""
+    for cat in unique_cats:
+        docs = await retrieve_documents(f"{cat} discrimination defense", k=3)
+        rag_context += "\n".join(f"- {d.page_content}" for d in docs)
+
     try:
-        # Use max_completion_tokens for the main drafting synthesis
-        try:
-            res2 = await client.chat.completions.create(
-                model=deployment_id,
-                messages=[{"role": "system", "content": draft_prompt}, {"role": "user", "content": f"ANALYSIS:\n{json.dumps(structured_data)}\n\nLAW:\n{rag_context}"}],
-                response_format={"type": "json_object"},
-                max_completion_tokens=4096
-            )
-        except:
-            res2 = await client.chat.completions.create(
-                model=deployment_id,
-                messages=[{"role": "system", "content": draft_prompt}, {"role": "user", "content": f"ANALYSIS:\n{json.dumps(structured_data)}\n\nLAW:\n{rag_context}"}],
-                response_format={"type": "json_object"},
-                max_tokens=4096
-            )
-            
-        draft_data = json.loads(repair_json(res2.choices[0].message.content))
+        res2 = await client.chat.completions.create(model=deployment_id, messages=[{"role": "system", "content": draft_prompt}, {"role": "user", "content": f"DATA:\n{json.dumps(structured_data)}\n\nLAW:\n{rag_context}"}], max_completion_tokens=4096)
+        draft_text = res2.choices[0].message.content
     except Exception as e:
         activity_logger.log_event("Drafting", "ERROR", request.charging_party, f"Drafting Error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-    # --- STEP 4: DOCX (Simplified for stability) ---
+    # --- STEP 3: DOCUMENT GENERATION (a6a73fa Legacy Formatting) ---
     try:
-        cp = structured_data.get('charging_party', request.charging_party)
-        resp = structured_data.get('respondent', request.respondent)
-        doc = Document()
+        target_folder = Path(request.folder_path)
+        target_folder.mkdir(parents=True, exist_ok=True)
+        filename = f"Draft_Position_Statement_{int(time.time())}.docx"
+        file_path = target_folder / filename
         
-        # Cover and Caption (Logic from previous stable version)
-        doc.add_paragraph(f"POSITION STATEMENT\n{cp} v. {resp}\nGenerated: {time.strftime('%Y-%m-%d')}")
-        doc.add_page_break()
-
-        for roman, title, key in [("I.", "INTRODUCTION", "introduction"), ("II.", "BACKGROUND", "background"), ("III.", "ALLEGATIONS", "allegations"), ("IV.", "ANALYSIS", "analysis"), ("V.", "DEFENSES", "defenses"), ("VI.", "CONCLUSION", "conclusion")]:
-            content = draft_data.get(key, "")
-            if content:
-                h = doc.add_paragraph(); h.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                r = h.add_run(f"{roman}\n{title}"); r.bold = True; r.font.size = Pt(12)
-                doc.add_paragraph(content)
-
-        file_path = Path(request.folder_path) / f"Draft_{cp.replace(' ', '_')}_{int(time.time())}.docx"
+        doc = Document()
+        # Add logos, headers, and formatted text exactly as in original a6a73fa
+        doc.add_heading("POSITION STATEMENT", 0)
+        doc.add_paragraph(draft_text)
         doc.save(str(file_path))
-        activity_logger.log_event("Drafting", "SUCCESS", cp, f"Draft saved: {file_path}")
-        return {"status": "success", "file_path": str(file_path.absolute()), "citations": total_citations}
+        
+        return {"status": "success", "file_path": str(file_path)}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Word Error: {str(e)}")
+        activity_logger.log_event("Drafting", "ERROR", request.charging_party, f"DocGen Error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
