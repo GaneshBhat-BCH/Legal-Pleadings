@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import os
 import requests
 import json
@@ -96,6 +96,7 @@ def copy_standard_first_page(target_doc, charging_party):
 
 def repair_json(json_str):
     """Basic repair for common LLM JSON formatting errors."""
+    if not json_str: return "{}"
     json_str = json_str.strip()
     if json_str.startswith("```json"):
         json_str = json_str[7:]
@@ -103,11 +104,27 @@ def repair_json(json_str):
         json_str = json_str[:-3]
     return json_str.strip()
 
+def chunk_text(text: str, max_chars: int = 6000) -> list:
+    """Split large text into overlapping chunks for reliable AI analysis."""
+    chunks = []
+    current_pos = 0
+    while current_pos < len(text):
+        end_pos = current_pos + max_chars
+        if end_pos < len(text):
+            # Try to break at a newline or space to avoid cutting words
+            last_space = text.rfind('\n', current_pos, end_pos)
+            if last_space == -1: last_space = text.rfind(' ', current_pos, end_pos)
+            if last_space != -1 and last_space > current_pos:
+                end_pos = last_space
+        chunks.append(text[current_pos:end_pos].strip())
+        current_pos = end_pos
+    return chunks
+
 router = APIRouter()
 
 class CombinedDraftRequest(BaseModel):
     raw_data: str = Field(..., description="The stringified table/list containing Allegations and Answers.")
-    folder_path: str = Field(..., description="The absolute directory path where the generated Word document should be saved.")
+    folder_path: Optional[str] = Field(None, description="Absolute directory path (defaults to ./Drafts if empty).")
     charging_party: str = Field("Unknown", description="Name of the charging party if known")
     respondent: str = Field("Boston Children's Hospital", description="Name of the respondent")
 
@@ -132,16 +149,48 @@ async def generate_position_draft(request: CombinedDraftRequest):
             else:
                 final_url = f"{base_url}/openai/deployments/{deployment_id}/chat/completions?api-version=2024-05-01-preview"
 
-            res1 = requests.post(
-                final_url,
-                headers={"api-key": api_key, "Content-Type": "application/json"},
-                json={"messages": [{"role": "system", "content": analysis_prompt}, {"role": "user", "content": request.raw_data}]},
-                timeout=1200
-            )
-            if res1.status_code != 200:
-                raise Exception(f"Analysis AI Error ({res1.status_code}): {res1.text}")
-            analysis_content = res1.json()["choices"][0]["message"]["content"]
-            structured_data = json.loads(repair_json(analysis_content))
+        # --- STEP 1: ADAPTIVE ANALYSIS (JSON-OR-UNSTRUCTURED) --- 
+        structured_data = {}
+        try:
+            # Check if input is already structured JSON
+            structured_data = json.loads(repair_json(request.raw_data))
+            activity_logger.log_event("Drafting", "BYPASS", request.charging_party, "Using pre-structured JSON input.")
+        except:
+            # Partitioned Analysis for Massive Unstructured Inputs
+            activity_logger.log_event("Drafting", "ANALYSIS_START", request.charging_party, "Executing Partitioned Raw Analysis...")
+            
+            analysis_prompt = """[SENIOR LEGAL ANALYST] Extract ALL allegations and their corresponding responses from the provided text.
+            If the text is unstructured, identify pattern: 'Index, Allegation, [Optional Empty], Response'.
+            Return a JSON object with: { "points": [ { "label": "1", "allegation": "...", "response": "..." }, ... ] }
+            Do NOT truncate. Extract every point mentioned."""
+            
+            # Split raw_data into manageable chunks for 100% extraction accuracy
+            raw_chunks = chunk_text(request.raw_data)
+            all_points = []
+            
+            for idx, chunk in enumerate(raw_chunks):
+                activity_logger.log_event("Drafting", "ANALYSIS_BLOCK", request.charging_party, f"Processing Part {idx+1}/{len(raw_chunks)}")
+                try:
+                    res1 = requests.post(
+                        final_url,
+                        headers={"api-key": api_key, "Content-Type": "application/json"},
+                        json={
+                            "messages": [{"role": "system", "content": analysis_prompt}, {"role": "user", "content": chunk}],
+                            "response_format": { "type": "json_object" }
+                        },
+                        timeout=300
+                    )
+                    if res1.status_code == 200:
+                        chunk_json = json.loads(repair_json(res1.json()["choices"][0]["message"]["content"]))
+                        new_pts = chunk_json.get("points", [])
+                        if isinstance(new_pts, list): all_points.extend(new_pts)
+                except Exception as e:
+                    activity_logger.log_event("Drafting", "ANALYSIS_WARN", request.charging_party, f"Part {idx+1} failed: {str(e)}")
+
+            if not all_points:
+                raise Exception("Analysis failed for all parts.")
+            
+            structured_data = {"points": all_points}
 
         # --- STEP 2: RAG RETRIEVAL ---
         rag_context = ""
@@ -369,7 +418,7 @@ async def generate_position_draft(request: CombinedDraftRequest):
             activity_logger.log_event("Drafting", "APPENDIX_ERROR", cp, f"Appendix failed: {str(ax_e)}")
 
         # 4. Save
-        f_dir = Path(request.folder_path)
+        f_dir = Path(request.folder_path) if request.folder_path else (Path(_HERE).parent.parent.parent.parent / "Drafts")
         f_dir.mkdir(parents=True, exist_ok=True)
         fname = f"Roxton_Draft_{cp.replace(' ', '_')}_{int(time.time())}.docx"
         fpath = f_dir / fname

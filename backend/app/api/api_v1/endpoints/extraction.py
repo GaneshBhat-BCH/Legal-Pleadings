@@ -33,9 +33,9 @@ def preprocess_text(text: str) -> str:
     return processed_text
 
 def validate_extraction_format(data: dict) -> bool:
-    """Verifies that the required keys are present for the downstream CSV and Drafting scripts."""
+    """Verifies that the required top-level keys are present for relational mapping."""
     if not isinstance(data, dict): return False
-    required_top_keys = ["document_metadata", "allegations_list"]
+    required_top_keys = ["document_metadata", "allegations_list", "defense_and_proofs"]
     for key in required_top_keys:
         if key not in data: return False
     
@@ -144,10 +144,13 @@ Return exactly this structure:
     {
       "point_number": "1",
       "allegation_text": "Verbatim allegation text",
-      "legal_category": "Category",
-      "defense_argument": "Formal defense argument for this point",
-      "suggested_proofs": ["Proof 1", "Proof 2"],
       "lawyer_comment": "Assertive formal defense attorney response referencing the allegation and applicable law."
+    }
+  ],
+  "defense_and_proofs": [
+    {
+      "point_ref": "1",
+      "suggested_proofs": ["Proof 1", "Proof 2"]
     }
   ]
 }
@@ -169,6 +172,7 @@ Respond ONLY with the JSON object."""
         activity_logger.log_event("Extraction", "INFO", target, f"Processing {len(chunk_groups)} page chunks.")
 
         final_allegations = []
+        final_defense = []
         final_metadata = {}
         last_parsed = {}
 
@@ -219,10 +223,14 @@ Respond ONLY with the JSON object."""
                     if m.get("charging_party") and "Name" not in m.get("charging_party"):
                         final_metadata = m
                 
-                # Append allegations
+                # Append allegations and defense proofs
                 new_allegations = chunk_json.get("allegations_list", [])
                 if isinstance(new_allegations, list):
                     final_allegations.extend(new_allegations)
+                
+                new_defense = chunk_json.get("defense_and_proofs", [])
+                if isinstance(new_defense, list):
+                    final_defense.extend(new_defense)
 
         # Merge results or fallback
         if not final_allegations and last_parsed:
@@ -238,7 +246,8 @@ Respond ONLY with the JSON object."""
                 })
             final_json = {
                 "document_metadata": final_metadata,
-                "allegations_list": final_allegations
+                "allegations_list": final_allegations,
+                "defense_and_proofs": final_defense
             }
         else:
             final_json = {}
