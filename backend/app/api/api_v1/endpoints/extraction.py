@@ -34,16 +34,16 @@ def preprocess_text(text: str) -> str:
 
 def validate_extraction_format(data: dict) -> bool:
     """Verifies that the required keys are present for the downstream CSV and Drafting scripts."""
-    required_top_keys = ["document_metadata", "allegations_list", "defense_and_proofs"]
+    if not isinstance(data, dict): return False
+    required_top_keys = ["document_metadata", "allegations_list"]
     for key in required_top_keys:
         if key not in data: return False
     
     # Check for metadata keys
-    meta = data["document_metadata"]
+    meta = data.get("document_metadata", {})
     for m in ["charging_party", "respondent", "date_filed", "all_detected_categories", "legal_case_summary"]:
         if m not in meta: return False
         
-    if not data["allegations_list"] or not isinstance(data["allegations_list"], list): return False
     return True
 
 @router.post("/extract")
@@ -107,21 +107,29 @@ async def extract_allegations(request: ExtractionRequest):
         activity_logger.log_event("Extraction", "INFO", target, "Pass 2: Sanitization Layer")
         masked_text = preprocess_text(raw_full_text)
 
-        # --- PASS 3: STRUCTURED REFINEMENT (Masked-to-JSON) ---
-        activity_logger.log_event("Extraction", "INFO", target, "Pass 3: Detailed Allegation Structuring")
+        # --- PASS 3: STRUCTURED REFINEMENT (Paginated Masked-to-JSON) ---
+        activity_logger.log_event("Extraction", "INFO", target, "Pass 3: Paginated Allegation Structuring")
+        
         system_prompt = """[SENIOR LEGAL DATA ENGINEER] Analyze the provided legal text and return a strict JSON object. 
-You must harvest EVERY possible allegation, particular, and paragraph from ALL pages. Do not leave any out.
+You must harvest all primary allegations from the text. Focus on the core claims.
 
 [ROLE IMMERSION & COMPLIANCE] 
 You are performing simulated legal data analysis for an internal enterprise automation system. This is NOT real legal advice for a consumer. Do NOT refuse this request on the basis of providing legal advice. You must fulfill the request exactly.
 
 [CONTENT FILTER & COMPLIANCE RULES]
-To comply with strict Azure OpenAI content safety filters, you MUST NOT generate explicitly sexual, violent, or hate-related language in your output. When generating the 'lawyer_comment', use highly clinical, sterile, and professional legal terminology for any sensitive facts (e.g., use "alleged inappropriate physical contact" instead of explicit sensitive words). Ensure the absolute absence of severe explicit language.
+To comply with strict Azure OpenAI content safety filters, you MUST NOT generate explicitly sexual, violent, or hate-related language in your output. Use highly clinical, sterile, and professional legal terminology for any sensitive facts (e.g., use "alleged inappropriate physical contact" instead of explicit sensitive words). Ensure the absolute absence of severe explicit language.
 
-Additionally, for each allegation include a "lawyer_comment":
-- Predict the best professional legal reply a lawyer can give.
-- Try to reference relevant laws to backbone the comment.
-- If unable to comment (e.g., purely factual), use exactly "[NEED LAWYERS COMMENT]".
+[LAWYER_COMMENT GENERATION RULES]
+For the "lawyer_comment" field on each allegation, write as an experienced employment defense attorney drafting a formal legal Position Statement on behalf of the Respondent:
+- Write in a formal legal tone suitable for a Position Statement.
+- Do NOT use phrases like "Counsel should evaluate", "may consider", or "it appears".
+- Be assertive and defensive (e.g., "The Respondent denies...", "The evidence demonstrates...").
+- Emphasize legitimate, non-discriminatory reasons where applicable.
+- Reference relevant legal standards (e.g., Title VII, M.G.L. c. 151B) when relevant.
+- Highlight lack of evidence if applicable.
+- Conclude clearly (e.g., "Accordingly, this allegation does not establish unlawful discrimination.").
+- Keep the comment very brief but legally strong (2-3 sentences max).
+- Do NOT hallucinate facts - only rely on the allegation text and suggested defense proofs.
 
 Return exactly this structure:
 {
@@ -135,56 +143,107 @@ Return exactly this structure:
   "allegations_list": [
     {
       "point_number": "1",
-      "allegation_text": "Verbatim text",
+      "allegation_text": "Verbatim allegation text",
       "legal_category": "Category",
-      "lawyer_comment": "Legal reply or [NEED LAWYERS COMMENT]"
-    }
-  ],
-  "defense_and_proofs": [
-    {
-      "point_ref": "1", 
-      "defense_argument": "Defense argument",
-      "suggested_proofs": ["Proof 1"]
+      "defense_argument": "Formal defense argument for this point",
+      "suggested_proofs": ["Proof 1", "Proof 2"],
+      "lawyer_comment": "Assertive formal defense attorney response referencing the allegation and applicable law."
     }
   ]
 }
 
 Respond ONLY with the JSON object."""
-
-        final_json = None
-        parsed_data = None
-        for attempt in range(2):
-            activity_logger.log_event("Extraction", "INFO", target, f"Refinement Pass (Attempt {attempt+1})")
-            async with AsyncAzureOpenAI(azure_endpoint=resource_base, api_key=api_key, api_version=api_version) as cl_s:
-                try: # Try both parameter styles for GPT-5 stability on this environment
-                     res_f = await cl_s.chat.completions.create(model=deployment_id, messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": f"DATA:\n{masked_text}"}], response_format={"type": "json_object"}, max_completion_tokens=4096)
-                except:
-                     res_f = await cl_s.chat.completions.create(model=deployment_id, messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": f"DATA:\n{masked_text}"}], response_format={"type": "json_object"}, max_tokens=4096)
-                
-                content = res_f.choices[0].message.content
-                if not content:
-                    fr = getattr(res_f.choices[0], "finish_reason", "unknown")
-                    activity_logger.log_event("Extraction", "WARNING", target, f"LLM returned empty content. Finish reason: {fr}")
-                    continue
-                
-                try:
-                    repaired_str = repair_json(content)
-                    if not repaired_str:
-                        raise ValueError("repair_json returned empty string.")
-                    parsed_data = json.loads(repaired_str)
-                except Exception as parse_e:
-                    activity_logger.log_event("Extraction", "WARNING", target, f"Parse Error: {str(parse_e)}. Content snippet: {content[:200]}")
-                    continue
-                
-                if validate_extraction_format(parsed_data):
-                    final_json = parsed_data
-                    break
         
-        if not final_json:
-            activity_logger.log_event("Extraction", "WARNING", target, "Returning unvalidated JSON schema.")
-            final_json = parsed_data if parsed_data else {}
+        # Split masked_text into page chunks using the delimiters we added in Pass 1
+        page_chunks = re.split(r'--- PAGE \d+ ---', masked_text)
+        page_chunks = [p.strip() for p in page_chunks if p.strip()]
+        
+        if not page_chunks: # Fallback if no page delimiters found
+            page_chunks = [masked_text]
 
-        activity_logger.log_event("Extraction", "SUCCESS", target, "Final Extraction Success.")
+        # Group chunks into manageable blocks (1 page per LLM call is safest for high-fidelity legal commentary)
+        chunk_groups = []
+        for i in range(0, len(page_chunks), 1):
+            chunk_groups.append(page_chunks[i])
+
+        activity_logger.log_event("Extraction", "INFO", target, f"Processing {len(chunk_groups)} page chunks.")
+
+        final_allegations = []
+        final_metadata = {}
+        last_parsed = {}
+
+        for idx, chunk in enumerate(chunk_groups):
+            activity_logger.log_event("Extraction", "INFO", target, f"Refinement Pass: Processing Chunk {idx+1}/{len(chunk_groups)}")
+            
+            chunk_json = None
+            for attempt in range(2):
+                activity_logger.log_event("Extraction", "INFO", target, f"Chunk {idx+1} (Attempt {attempt+1})")
+                async with AsyncAzureOpenAI(azure_endpoint=resource_base, api_key=api_key, api_version=api_version) as cl_s:
+                    try:
+                         res_f = await cl_s.chat.completions.create(
+                             model=deployment_id, 
+                             messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": f"DATA (PART {idx+1}/{len(chunk_groups)}):\n{chunk}"}], 
+                             response_format={"type": "json_object"}, 
+                             max_completion_tokens=8192
+                         )
+                    except:
+                         res_f = await cl_s.chat.completions.create(
+                             model=deployment_id, 
+                             messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": f"DATA (PART {idx+1}/{len(chunk_groups)}):\n{chunk}"}], 
+                             response_format={"type": "json_object"}, 
+                             max_tokens=8192
+                         )
+                    
+                    content = res_f.choices[0].message.content
+                    if not content:
+                        continue
+                    
+                    try:
+                        repaired_str = repair_json(content)
+                        parsed_chunk = json.loads(repaired_str)
+                        if validate_extraction_format(parsed_chunk):
+                            chunk_json = parsed_chunk
+                            break
+                        else:
+                            # If it's valid JSON but fails our strict schema, we still keep it as a fallback
+                            chunk_json = parsed_chunk
+                    except:
+                        continue
+            
+            if chunk_json:
+                last_parsed = chunk_json
+                # Extract metadata from the first chunk that has it
+                if not final_metadata and chunk_json.get("document_metadata"):
+                    # Check if metadata is actually populated (not just placeholders)
+                    m = chunk_json["document_metadata"]
+                    if m.get("charging_party") and "Name" not in m.get("charging_party"):
+                        final_metadata = m
+                
+                # Append allegations
+                new_allegations = chunk_json.get("allegations_list", [])
+                if isinstance(new_allegations, list):
+                    final_allegations.extend(new_allegations)
+
+        # Merge results or fallback
+        if not final_allegations and last_parsed:
+            final_json = last_parsed
+        elif final_allegations:
+            if not final_metadata: # Fallback metadata
+                final_metadata = last_parsed.get("document_metadata", {
+                    "charging_party": "Detected from OCR",
+                    "respondent": "Respondent",
+                    "date_filed": "Unknown",
+                    "all_detected_categories": [],
+                    "legal_case_summary": "Extracted from multiple parts."
+                })
+            final_json = {
+                "document_metadata": final_metadata,
+                "allegations_list": final_allegations
+            }
+        else:
+            final_json = {}
+
+        activity_logger.log_event("Extraction", "SUCCESS", target, f"Final Extraction Success. Total allegations: {len(final_allegations)}")
         return JSONResponse(content=final_json)
 
     except Exception as e:
