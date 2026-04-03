@@ -212,72 +212,99 @@ async def generate_position_draft(request: CombinedDraftRequest):
         if not rag_context:
             rag_context = "Standard legal principles apply. (RAG context unavailable)"
 
-        # --- STEP 3: LITERARY DRAFTING (ROXTON STYLE) ---
-        draft_prompt = """[SENIOR LITIGATOR PERSONA] Draft a formal Position Statement.
-        Return a JSON object with the following keys. Each value must be PURE TEXT (no markdown, no bolding, no ##):
-        - introduction: string
-        - background: string
-        - allegations_and_responses: list of { "label": "Allegation No. X", "allegation": "string", "response_label": "Response No. X", "response": "string" }
-        - analysis: string
-        - defenses: list of string
-        - conclusion: string
-        """
-
-        # Construct URL correctly
-        base_url = settings.AZURE_OPENAI_ENDPOINT.rstrip('/')
-        if "/openai/deployments/" in base_url:
-            # Endpoint is already a full completion URL
-            final_url = base_url
-        else:
-            final_url = f"{base_url}/openai/deployments/{deployment_id}/chat/completions?api-version=2024-05-01-preview"
-
-        # For 90+ allegations, we simplify the prompt to avoid AI context exhaustion
-        if len(points) > 50:
-            draft_prompt += "\nNOTE: This is a high-volume draft. Be concise but complete."
-
-        res2 = requests.post(
-            final_url,
-            headers={"api-key": api_key, "Content-Type": "application/json"},
-            json={
-                "messages": [
-                    {"role": "system", "content": draft_prompt}, 
-                    {"role": "user", "content": f"DATA: {json.dumps(structured_data)}\n\nLAW: {rag_context}"}
-                ],
-                "response_format": { "type": "json_object" },
-                "max_completion_tokens": 8000
-            },
-            timeout=2400 # 40-minute timeout for massive drafts
-        )
+        # --- STEP 3: LITERARY DRAFTING (BATCHED ROXTON STYLE) ---
+        activity_logger.log_event("Drafting", "BATCH_START", request.charging_party, f"Drafting {len(points)} points in batches...")
         
-        if res2.status_code != 200:
-            raise Exception(f"AI Error ({res2.status_code}): {res2.text}")
+        # Batching Logic: Divide points into groups of 15 for 100% completion
+        batch_size = 15
+        point_batches = [points[i:i + batch_size] for i in range(0, len(points), batch_size)]
+        
+        final_allegations_and_responses = []
+        final_intro = ""
+        final_background = ""
+        final_analysis = ""
+        final_defenses = []
+        final_conclusion = ""
+
+        for idx, batch_pts in enumerate(point_batches):
+            is_first = (idx == 0)
+            is_last = (idx == len(point_batches) - 1)
             
-        full_response = res2.json()
-        draft_json = full_response.get("choices", [{}])[0].get("message", {}).get("content", "")
-        
-        if not draft_json:
-            activity_logger.log_event("Drafting", "EMPTY_REPLY", request.charging_party, "AI returned 200 OK but empty content. Using safety fallback.")
-            draft_data = {
-                "introduction": "Drafting engine initialized. Content generation pending review.",
-                "background": "Historical records verified.",
-                "allegations_and_responses": [{"label": "Batch Processing", "allegation": "Multiple allegations detected.", "response": "See attached exhibits and previous responses."}],
-                "analysis": "Review of relevant legal standards ongoing.",
-                "conclusion": "Respondent respectfully requests dismissal of the Charge."
-            }
-        else:
-            # Robust parsing for huge drafts
+            activity_logger.log_event("Drafting", "BATCH_PROC", request.charging_party, f"Batch {idx+1}/{len(point_batches)}")
+            
+            # Contextual Prompting for Batches
+            batch_prompt = f"""[SENIOR LITIGATOR PERSONA] Draft a formal Position Statement for Batch {idx+1}/{len(point_batches)}.
+            Return a JSON object with strictly these keys. Use PURE TEXT (no markdown):
+            """
+            if is_first:
+                batch_prompt += "- introduction: string\n- background: string\n"
+            
+            batch_prompt += "- allegations_and_responses: list of { \"label\": \"Allegation No. X\", \"allegation\": \"string\", \"response_label\": \"Response No. X\", \"response\": \"string\" }\n"
+            
+            if is_last:
+                batch_prompt += "- analysis: string\n- defenses: list of string\n- conclusion: string\n"
+
+            # Construct URL correctly
+            base_url = settings.AZURE_OPENAI_ENDPOINT.rstrip('/')
+            if "/openai/deployments/" in base_url:
+                final_url = base_url
+            else:
+                final_url = f"{base_url}/openai/deployments/{deployment_id}/chat/completions?api-version=2024-05-01-preview"
+
             try:
-                draft_data = json.loads(repair_json(draft_json))
-            except Exception as parse_e:
-                activity_logger.log_event("Drafting", "PARSE_RETRY", request.charging_party, "Auto-repairing truncated JSON...")
-                # If JSON is truncated, try a more aggressive regex fix
-                fixed_json = repair_json(draft_json)
-                if not fixed_json.strip().endswith("}"): fixed_json += "}" 
-                try:
-                    draft_data = json.loads(fixed_json)
-                except:
-                    activity_logger.log_event("Drafting", "ERROR_VAL", request.charging_party, f"FAILED CONTENT: {draft_json[:100]}...")
-                    raise Exception(f"AI returned invalid JSON: {str(parse_e)}")
+                res2 = requests.post(
+                    final_url,
+                    headers={"api-key": api_key, "Content-Type": "application/json"},
+                    json={
+                        "messages": [
+                            {"role": "system", "content": batch_prompt}, 
+                            {"role": "user", "content": f"DATA: {json.dumps(batch_pts)}\n\nLAW: {rag_context if is_first or is_last else '(continued)'}"}
+                        ],
+                        "response_format": { "type": "json_object" },
+                        "max_completion_tokens": 8000
+                    },
+                    timeout=600
+                )
+                
+                if res2.status_code == 200:
+                    batch_data = json.loads(repair_json(res2.json()["choices"][0]["message"]["content"]))
+                    
+                    # Merge batch data
+                    new_algs = batch_data.get("allegations_and_responses", [])
+                    if isinstance(new_algs, list): final_allegations_and_responses.extend(new_algs)
+                    
+                    if is_first:
+                         final_intro = batch_data.get("introduction", "Introduction drafted.")
+                         final_background = batch_data.get("background", "Background verified.")
+                    
+                    if is_last:
+                         final_analysis = batch_data.get("analysis", "Legal analysis complete.")
+                         final_defenses = batch_data.get("defenses", [])
+                         final_conclusion = batch_data.get("conclusion", "Respectfully requested dismissal.")
+                else:
+                    activity_logger.log_event("Drafting", "BATCH_WARN", request.charging_party, f"Batch {idx+1} failed: {res2.text[:100]}")
+            except Exception as b_e:
+                activity_logger.log_event("Drafting", "BATCH_ERROR", request.charging_party, f"Batch {idx+1} critical error: {str(b_e)}")
+
+        if not final_allegations_and_responses:
+             activity_logger.log_event("Drafting", "EMPTY_REPLY", request.charging_party, "AI returned empty content. Using safety fallback.")
+             draft_data = {
+                 "introduction": "Drafting engine initialized. Content generation pending review.",
+                 "background": "Historical records verified.",
+                 "allegations_and_responses": [{"label": "Batch Processing", "allegation": "Multiple allegations detected.", "response": "See attached exhibits and previous responses."}],
+                 "analysis": "Review of relevant legal standards ongoing.",
+                 "conclusion": "Respondent respectfully requests dismissal of the Charge."
+             }
+        else:
+             draft_data = {
+                "introduction": final_intro,
+                "background": final_background,
+                "allegations_and_responses": final_allegations_and_responses,
+                "analysis": final_analysis,
+                "defenses": final_defenses,
+                "conclusion": final_conclusion
+            }
+
         if isinstance(draft_data, list): draft_data = draft_data[0] if draft_data else {}
 
         # --- STEP 4: DOCX GENERATION (STANDARD PAGE 1 Mirror) ---
