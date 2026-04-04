@@ -4,20 +4,35 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 import os
 from pathlib import Path
 
-def create_base_template():
+def create_legal_template():
     doc = Document()
     
+    # Paths to logos
+    # Script is in root. backend/assets/ is the target.
+    _ASSETS_DIR = Path("backend/assets")
+    LEFT_LOGO = _ASSETS_DIR / "bch_logo.png"
+    RIGHT_LOGO = _ASSETS_DIR / "hms_logo.png"
+
     # 1. Logo Table (Table 0)
     table = doc.add_table(rows=1, cols=2)
     table.columns[0].width = Inches(4.0)
     table.columns[1].width = Inches(2.5)
     
-    # Placeholders for logos (The code expects images in the cells)
-    # Since we can't add pictures easily to a template without the files being in the right place,
-    # we just add the table structure the code expects.
     cell_l = table.cell(0, 0)
     cell_r = table.cell(0, 1)
-    cell_r.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    
+    # Add Logos if found
+    if LEFT_LOGO.exists():
+        cell_l.paragraphs[0].add_run().add_picture(str(LEFT_LOGO), width=Inches(2.5))
+    else:
+        cell_l.paragraphs[0].text = "[BCH LOGO MISSING]"
+        
+    if RIGHT_LOGO.exists():
+        p_r = cell_r.paragraphs[0]
+        p_r.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        p_r.add_run().add_picture(str(RIGHT_LOGO), width=Inches(1.2))
+    else:
+        cell_r.paragraphs[0].text = "[HMS LOGO MISSING]"
 
     # 2. Add Standard Header Paragraphs
     doc.add_paragraph("\n")
@@ -58,10 +73,10 @@ def create_base_template():
     doc.add_paragraph("[The point-by-point drafting will start after this section separator]")
 
     # Save to the templates folder
-    output_path = Path("backend/assets/templates/Andrea_Roxton_Template.docx")
+    output_path = Path("backend/assets/templates/Legal_Template.docx")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     doc.save(str(output_path))
-    print(f"Created template at: {output_path.absolute()}")
+    print(f"Created template with images at: {output_path.absolute()}")
 
 if __name__ == "__main__":
-    create_base_template()
+    create_legal_template()
