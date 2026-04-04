@@ -14,14 +14,17 @@ from app.core.config import settings
 from app.services.rag_service import retrieve_documents
 from app.core.logger import activity_logger
 
-# Helper to resolve logo paths (Current structure: backend/app/api/api_v1/endpoints/...)
+# Helper to resolve logo paths
 _HERE = Path(__file__).parent
+# Navigate to backend/assets correctly (parent is api_v1, parent2 is api, parent3 is app, parent4 is backend)
 _ASSETS_DIR = _HERE.parent.parent.parent.parent / "assets"
 LEFT_LOGO = _ASSETS_DIR / "bch_logo.png"
 RIGHT_LOGO = _ASSETS_DIR / "hms_logo.png"
 
-# Reference Document Path
-REFERENCE_DOC_PATH = r"C:\Users\GaneshBhat\OneDrive - Novatio Solutions\Desktop\Draft_Statement_Andrea_Roxton_1774449472.docx"
+# Reference Document Path (Template)
+# Use a relative fallback for the VM environment if the OneDrive path is missing
+_DEFAULT_TEMPLATE = _ASSETS_DIR / "templates" / "Andrea_Roxton_Template.docx"
+REFERENCE_DOC_PATH = os.getenv("REFERENCE_DOC_PATH", str(_DEFAULT_TEMPLATE))
 
 def get_current_date_str():
     from datetime import datetime
