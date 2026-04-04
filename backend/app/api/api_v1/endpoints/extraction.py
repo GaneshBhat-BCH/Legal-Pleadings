@@ -184,19 +184,15 @@ Respond ONLY with the JSON object."""
                 activity_logger.log_event("Extraction", "INFO", target, f"Chunk {idx+1} (Attempt {attempt+1})")
                 async with AsyncAzureOpenAI(azure_endpoint=resource_base, api_key=api_key, api_version=api_version) as cl_s:
                     try:
-                         res_f = await cl_s.chat.completions.create(
-                             model=deployment_id, 
-                             messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": f"DATA (PART {idx+1}/{len(chunk_groups)}):\n{chunk}"}], 
-                             response_format={"type": "json_object"}, 
-                             max_completion_tokens=8192
-                         )
-                    except:
-                         res_f = await cl_s.chat.completions.create(
-                             model=deployment_id, 
-                             messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": f"DATA (PART {idx+1}/{len(chunk_groups)}):\n{chunk}"}], 
-                             response_format={"type": "json_object"}, 
-                             max_tokens=8192
-                         )
+                        res_f = await cl_s.chat.completions.create(
+                            model=deployment_id, 
+                            messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": f"DATA (PART {idx+1}/{len(chunk_groups)}):\n{chunk}"}], 
+                            response_format={"type": "json_object"}, 
+                            max_completion_tokens=8192
+                        )
+                    except Exception as e:
+                        activity_logger.log_event("Extraction", "RETRY_ERR", target, f"Completion error: {str(e)}")
+                        continue
                     
                     content = res_f.choices[0].message.content
                     if not content:
