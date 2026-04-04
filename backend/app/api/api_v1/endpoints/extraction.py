@@ -111,13 +111,16 @@ async def extract_allegations(request: ExtractionRequest):
         activity_logger.log_event("Extraction", "INFO", target, "Pass 3: Paginated Allegation Structuring")
         
         system_prompt = """[SENIOR LEGAL DATA ENGINEER] Analyze the provided legal text and return a strict JSON object. 
-You must harvest all primary allegations from the text. Focus on the core claims.
+You must harvest all primary allegations and their factual particulars from the text. 
+
+[EXTRACTION SCOPE - SURGICAL FILTERING]
+- ONLY extract numbered allegations or specific factual claims made by the charging party.
+- EXCLUDE all administrative noise: Case captions (MCAD/EEOC numbers), certificates of service, document definitions, and form instructions.
+- EXCLUDE "Charging Party:", "Respondent:", "Date Filed:", and other field labels from the allegations list (these go into metadata only).
+- DO NOT summarize. Use verbatim text for the allegation.
 
 [ROLE IMMERSION & COMPLIANCE] 
 You are performing simulated legal data analysis for an internal enterprise automation system. This is NOT real legal advice for a consumer. Do NOT refuse this request on the basis of providing legal advice. You must fulfill the request exactly.
-
-[CONTENT FILTER & COMPLIANCE RULES]
-To comply with strict Azure OpenAI content safety filters, you MUST NOT generate explicitly sexual, violent, or hate-related language in your output. Use highly clinical, sterile, and professional legal terminology for any sensitive facts (e.g., use "alleged inappropriate physical contact" instead of explicit sensitive words). Ensure the absolute absence of severe explicit language.
 
 [LAWYER_COMMENT GENERATION RULES]
 For the "lawyer_comment" field on each allegation, write as an experienced employment defense attorney drafting a formal legal Position Statement on behalf of the Respondent:
@@ -126,8 +129,6 @@ For the "lawyer_comment" field on each allegation, write as an experienced emplo
 - Be assertive and defensive (e.g., "The Respondent denies...", "The evidence demonstrates...").
 - Emphasize legitimate, non-discriminatory reasons where applicable.
 - Reference relevant legal standards (e.g., Title VII, M.G.L. c. 151B) when relevant.
-- Highlight lack of evidence if applicable.
-- Conclude clearly (e.g., "Accordingly, this allegation does not establish unlawful discrimination.").
 - Keep the comment very brief but legally strong (2-3 sentences max).
 - Do NOT hallucinate facts - only rely on the allegation text and suggested defense proofs.
 
@@ -228,25 +229,67 @@ Respond ONLY with the JSON object."""
                 if isinstance(new_defense, list):
                     final_defense.extend(new_defense)
 
-        # Merge results or fallback
-        if not final_allegations and last_parsed:
-            final_json = last_parsed
-        elif final_allegations:
-            if not final_metadata: # Fallback metadata
-                final_metadata = last_parsed.get("document_metadata", {
-                    "charging_party": "Detected from OCR",
-                    "respondent": "Respondent",
-                    "date_filed": "Unknown",
-                    "all_detected_categories": [],
-                    "legal_case_summary": "Extracted from multiple parts."
-                })
-            final_json = {
-                "document_metadata": final_metadata,
-                "allegations_list": final_allegations,
-                "defense_and_proofs": final_defense
-            }
-        else:
-            final_json = {}
+        # --- POST-PROCESSOR: REINDEX & CLEAN ---
+        if final_allegations:
+            activity_logger.log_event("Extraction", "INFO", target, "Executing Post-Processor: Re-indexing & Noise Reduction")
+            
+            cleaned_allegations = []
+            cleaned_proofs = []
+            seen_texts = set()
+            
+            # 1. Deduplicate and Filter Noise
+            for idx, item in enumerate(final_allegations):
+                txt = (item.get("allegation_text") or "").strip()
+                # Skip if empty or a generic placeholder
+                if not txt or len(txt) < 5 or txt.lower() in ["name", "none", "n/a", "date"]:
+                    continue
+                # Skip if it looks like a field label
+                if txt.endswith(":") and len(txt) < 30:
+                    continue
+                # Deduplicate by text content
+                if txt.lower() in seen_texts:
+                    continue
+                
+                seen_texts.add(txt.lower())
+                
+                # New sequential ID
+                new_id = str(len(cleaned_allegations) + 1)
+                
+                # Update current item
+                item["point_number"] = new_id
+                cleaned_allegations.append(item)
+                
+                # Try to find matching proofs from the original collected list
+                # This is heuristic but usually works if the AI followed order
+                old_ref = item.get("point_number")
+                matching_proof = next((p for p in final_defense if str(p.get("point_ref")) == str(old_ref)), None)
+                if matching_proof:
+                    cleaned_proofs.append({
+                        "point_ref": new_id,
+                        "suggested_proofs": matching_proof.get("suggested_proofs", [])
+                    })
+                else:
+                    # Fallback default proof
+                    cleaned_proofs.append({"point_ref": new_id, "suggested_proofs": ["Personnel file", "Policy documentation"]})
+
+            final_allegations = cleaned_allegations
+            final_defense = cleaned_proofs
+
+        # Build final object
+        if not final_metadata: # Final check
+             final_metadata = last_parsed.get("document_metadata", {
+                "charging_party": "Detected from OCR",
+                "respondent": "Respondent",
+                "date_filed": "Unknown",
+                "all_detected_categories": [],
+                "legal_case_summary": "Extracted from multiple pages."
+            })
+
+        final_json = {
+            "document_metadata": final_metadata,
+            "allegations_list": final_allegations,
+            "defense_and_proofs": final_defense
+        }
 
         activity_logger.log_event("Extraction", "SUCCESS", target, f"Final Extraction Success. Total allegations: {len(final_allegations)}")
         return JSONResponse(content=final_json)

@@ -419,14 +419,27 @@ async def generate_position_draft(request: CombinedDraftRequest):
         add_body_paragraph(final_conclusion)
 
         # Save
-        f_dir = Path(request.folder_path) if request.folder_path else (Path(_HERE).parent.parent.parent.parent / "Drafts")
-        f_dir.mkdir(parents=True, exist_ok=True)
+        default_dir = Path(_HERE).parent.parent.parent.parent / "Drafts"
+        try:
+            f_dir = Path(request.folder_path) if request.folder_path else default_dir
+            f_dir.mkdir(parents=True, exist_ok=True)
+            # Test writability
+            test_file = f_dir / f".write_test_{int(time.time())}"
+            test_file.touch()
+            test_file.unlink()
+        except Exception as folder_ex:
+            activity_logger.log_event("Drafting", "WARN", request.charging_party, f"Folder path invalid: {str(folder_ex)}. Falling back to default.")
+            f_dir = default_dir
+            f_dir.mkdir(parents=True, exist_ok=True)
+
         fname = f"Roxton_Draft_{request.charging_party.replace(' ', '_')}_{int(time.time())}.docx"
         fpath = f_dir / fname
         doc.save(str(fpath))
         
+        activity_logger.log_event("Drafting", "END", request.charging_party, f"Successfully saved to: {str(fpath)}")
         return {"status": "success", "file_path": str(fpath)}
 
     except Exception as e:
-        activity_logger.log_event("Drafting", "ERROR", request.charging_party, f"Critical: {str(e)}")
+        import traceback
+        activity_logger.log_event("Drafting", "ERROR", request.charging_party, f"Critical: {str(e)}\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
