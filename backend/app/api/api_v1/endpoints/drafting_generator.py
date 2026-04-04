@@ -23,7 +23,7 @@ RIGHT_LOGO = _ASSETS_DIR / "hms_logo.png"
 
 # Reference Document Path (Template)
 # Use a relative fallback for the VM environment if the OneDrive path is missing
-_DEFAULT_TEMPLATE = _ASSETS_DIR / "templates" / "Andrea_Roxton_Template.docx"
+_DEFAULT_TEMPLATE = _ASSETS_DIR / "templates" / "Legal_Template.docx"
 REFERENCE_DOC_PATH = os.getenv("REFERENCE_DOC_PATH", str(_DEFAULT_TEMPLATE))
 
 def get_current_date_str():
