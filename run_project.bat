@@ -8,6 +8,11 @@ echo ====================================================
 echo.
 echo Starting automated setup...
 echo.
+echo Cleaning up any existing backend runs...
+for /f "tokens=5" %%a in ('netstat -aon ^| findstr :8000 ^| findstr LISTENING') do taskkill /F /PID %%a >nul 2>&1
+for /f "tokens=5" %%a in ('netstat -aon ^| findstr :8001 ^| findstr LISTENING') do taskkill /F /PID %%a >nul 2>&1
+echo DONE.
+echo.
 
 REM Check Python
 echo [1/5] Checking Python...
@@ -73,10 +78,6 @@ echo Database checks complete.
 echo.
 
 REM Start server
-echo [5/5] Starting Server...
-echo Cleaning up port 8000...
-for /f "tokens=5" %%a in ('netstat -aon ^| findstr :8000 ^| findstr LISTENING') do taskkill /F /PID %%a >nul 2>&1
-
 echo Launching server...
 start /B venv\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
@@ -108,7 +109,8 @@ echo.
 echo Press any key to STOP the server...
 pause >nul
 for /f "tokens=5" %%a in ('netstat -aon ^| findstr :8000 ^| findstr LISTENING') do taskkill /F /PID %%a >nul 2>&1
-echo Server stopped.
+for /f "tokens=5" %%a in ('netstat -aon ^| findstr :8001 ^| findstr LISTENING') do taskkill /F /PID %%a >nul 2>&1
+echo Servers stopped.
 
 :end_script
 
