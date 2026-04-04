@@ -1,10 +1,23 @@
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+import json
 from app.core.config import settings
 from app.api.api_v1.endpoints import rag, extraction, generation, drafting_generator
+from app.core.logger import activity_logger
 
 app = FastAPI(title=settings.PROJECT_NAME)
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    errors = exc.errors()
+    # Log the exact field and reason for the 422 error
+    activity_logger.log_event("FastAPI", "VALIDATION_ERROR", "system", f"422 Detail: {errors}")
+    print(f"--- 422 VALIDATION ERROR ---")
+    print(json.dumps(errors, indent=2))
+    return JSONResponse(status_code=422, content={"detail": errors})
 
 # CORS structure
 origins = [

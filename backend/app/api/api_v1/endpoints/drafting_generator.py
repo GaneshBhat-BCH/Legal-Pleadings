@@ -156,9 +156,15 @@ async def generate_position_draft(request: CombinedDraftRequest):
     try:
         # --- STEP 1: ADAPTIVE ANALYSIS (JSON-OR-UNSTRUCTURED) --- 
         all_points = []
+        
+        # Sanitize raw_data: Remove problematic literal control characters that break JSON
+        sanitized_raw = request.raw_data.replace("\r", "").replace("\t", " ")
+        if "\\n" not in sanitized_raw: # If they used literal newlines instead of \n
+            sanitized_raw = sanitized_raw.replace("\n", "\\n")
+
         try:
             # Check if input is already structured JSON
-            structured_input = json.loads(repair_json(request.raw_data))
+            structured_input = json.loads(repair_json(sanitized_raw))
             all_points = structured_input.get("points", []) or structured_input.get("allegations_list", [])
             activity_logger.log_event("Drafting", "BYPASS", request.charging_party, "Using pre-structured JSON input.")
         except:
@@ -168,13 +174,14 @@ async def generate_position_draft(request: CombinedDraftRequest):
             analysis_prompt = """[SENIOR LEGAL ANALYST] Extract ALL individual allegations and their corresponding responses verbatim.
             STRICT RULES:
             - ZERO MERGING. Every numbered index (1, 2, 3...) must be its own unique entry.
-            - NO SUMMARIZATION. Keep all names (e.g. 'Betsy') and specific quotes.
-            - Pattern: 'Index, Allegation, [Optional Empty], Response/Answer'.
+            - NO SUMMARIZATION. Keep all names (e.g. 'Andrea Roxton', 'Genevieve Benoit') and verbatim quotes.
+            - Pattern: Identify the index number, then the allegation text, then the employer's response.
+            - IMPORTANT: The data is unstructured. Do not be confused by commas inside legal sentences.
             - Return JSON: { "points": [ { "label": "X", "allegation": "...", "response": "..." }, ... ] }
             """
             
             # Use smaller 2,500-character chunks with generous 500-char overlap
-            raw_chunks = chunk_text(request.raw_data, 2500, 500)
+            raw_chunks = chunk_text(sanitized_raw, 2500, 500)
             
             for idx, chunk in enumerate(raw_chunks):
                 activity_logger.log_event("Drafting", "ANALYSIS_BLOCK", request.charging_party, f"Processing Part {idx+1}/{len(raw_chunks)}")
