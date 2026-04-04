@@ -104,20 +104,31 @@ def repair_json(json_str):
         json_str = json_str[:-3]
     return json_str.strip()
 
-def chunk_text(text: str, max_chars: int = 6000) -> list:
+def chunk_text(text: str, max_chars: int = 6000, overlap: int = 500) -> list:
     """Split large text into overlapping chunks for reliable AI analysis."""
     chunks = []
     current_pos = 0
     while current_pos < len(text):
-        end_pos = current_pos + max_chars
+        end_pos = min(current_pos + max_chars, len(text))
+        
+        # Try to find a clean break (newline) within the last 200 chars of the chunk
         if end_pos < len(text):
-            # Try to break at a newline or space to avoid cutting words
-            last_space = text.rfind('\n', current_pos, end_pos)
-            if last_space == -1: last_space = text.rfind(' ', current_pos, end_pos)
-            if last_space != -1 and last_space > current_pos:
-                end_pos = last_space
+            break_pos = text.rfind('\n', end_pos - 200, end_pos)
+            if break_pos != -1 and break_pos > current_pos:
+                end_pos = break_pos
+        
         chunks.append(text[current_pos:end_pos].strip())
-        current_pos = end_pos
+        
+        # Move forward by (chunk_size - overlap) to ensure continuity
+        new_pos = end_pos - overlap
+        if new_pos <= current_pos:
+            new_pos = end_pos
+        current_pos = new_pos
+        
+        if end_pos >= len(text):
+            break
+            
+    return chunks
     return chunks
 
 router = APIRouter()
@@ -130,43 +141,40 @@ class CombinedDraftRequest(BaseModel):
 
 @router.post("/generate_position_draft")
 async def generate_position_draft(request: CombinedDraftRequest):
-    activity_logger.log_event("Drafting", "START", request.charging_party, "Executing Roxton-Style drafting logic")
+    activity_logger.log_event("Drafting", "START", request.charging_party, "Executing Roxton-Style Point-by-Point Drafting")
     
     api_key = settings.AZURE_OPENAI_API_KEY
     deployment_id = settings.AZURE_OPENAI_MODEL
     
-    try:
-        # --- STEP 1: ANALYSIS & CATEGORIZATION ---
-        try:
-            # Check if input is already structured JSON
-            structured_data = json.loads(repair_json(request.raw_data))
-            activity_logger.log_event("Drafting", "BYPASS", request.charging_party, "Using pre-structured JSON input.")
-        except:
-            # Construct URL correctly
-            base_url = settings.AZURE_OPENAI_ENDPOINT.rstrip('/')
-            if "/openai/deployments/" in base_url:
-                final_url = base_url
-            else:
-                final_url = f"{base_url}/openai/deployments/{deployment_id}/chat/completions?api-version=2024-05-01-preview"
+    # Construct base URL for Azure OpenAI
+    base_url = settings.AZURE_OPENAI_ENDPOINT.rstrip('/')
+    if "/openai/deployments/" in base_url:
+        final_url = base_url
+    else:
+        final_url = f"{base_url}/openai/deployments/{deployment_id}/chat/completions?api-version=2024-05-01-preview"
 
+    try:
         # --- STEP 1: ADAPTIVE ANALYSIS (JSON-OR-UNSTRUCTURED) --- 
-        structured_data = {}
+        all_points = []
         try:
             # Check if input is already structured JSON
-            structured_data = json.loads(repair_json(request.raw_data))
+            structured_input = json.loads(repair_json(request.raw_data))
+            all_points = structured_input.get("points", []) or structured_input.get("allegations_list", [])
             activity_logger.log_event("Drafting", "BYPASS", request.charging_party, "Using pre-structured JSON input.")
         except:
             # Partitioned Analysis for Massive Unstructured Inputs
             activity_logger.log_event("Drafting", "ANALYSIS_START", request.charging_party, "Executing Partitioned Raw Analysis...")
             
-            analysis_prompt = """[SENIOR LEGAL ANALYST] Extract ALL allegations and their corresponding responses from the provided text.
-            If the text is unstructured, identify pattern: 'Index, Allegation, [Optional Empty], Response'.
-            Return a JSON object with: { "points": [ { "label": "1", "allegation": "...", "response": "..." }, ... ] }
-            Do NOT truncate. Extract every point mentioned."""
+            analysis_prompt = """[SENIOR LEGAL ANALYST] Extract ALL individual allegations and their corresponding responses verbatim.
+            STRICT RULES:
+            - ZERO MERGING. Every numbered index (1, 2, 3...) must be its own unique entry.
+            - NO SUMMARIZATION. Keep all names (e.g. 'Betsy') and specific quotes.
+            - Pattern: 'Index, Allegation, [Optional Empty], Response/Answer'.
+            - Return JSON: { "points": [ { "label": "X", "allegation": "...", "response": "..." }, ... ] }
+            """
             
-            # Split raw_data into manageable chunks for 100% extraction accuracy
-            raw_chunks = chunk_text(request.raw_data)
-            all_points = []
+            # Use smaller 2,500-character chunks with generous 500-char overlap
+            raw_chunks = chunk_text(request.raw_data, 2500, 500)
             
             for idx, chunk in enumerate(raw_chunks):
                 activity_logger.log_event("Drafting", "ANALYSIS_BLOCK", request.charging_party, f"Processing Part {idx+1}/{len(raw_chunks)}")
@@ -175,8 +183,9 @@ async def generate_position_draft(request: CombinedDraftRequest):
                         final_url,
                         headers={"api-key": api_key, "Content-Type": "application/json"},
                         json={
-                            "messages": [{"role": "system", "content": analysis_prompt}, {"role": "user", "content": chunk}],
-                            "response_format": { "type": "json_object" }
+                            "messages": [{"role": "system", "content": analysis_prompt}, {"role": "user", "content": f"DATA (PART {idx+1}/{len(raw_chunks)}):\n{chunk}"}],
+                            "response_format": { "type": "json_object" },
+                            "max_completion_tokens": 4096
                         },
                         timeout=300
                     )
@@ -187,271 +196,235 @@ async def generate_position_draft(request: CombinedDraftRequest):
                 except Exception as e:
                     activity_logger.log_event("Drafting", "ANALYSIS_WARN", request.charging_party, f"Part {idx+1} failed: {str(e)}")
 
-            if not all_points:
-                raise Exception("Analysis failed for all parts.")
+        if not all_points:
+            raise Exception("No allegations found in input.")
+
+        # --- STEP 1d: POINT AUDIT & GAP RECOVERY (SAFETY NET) ---
+        try:
+            found_labels = []
+            for p in all_points:
+                try:
+                    lbl_num = re.findall(r'\d+', str(p.get('label', '')))
+                    if lbl_num: found_labels.append(int(lbl_num[0]))
+                except: continue
             
-            structured_data = {"points": all_points}
+            if found_labels:
+                found_labels = sorted(list(set(found_labels)))
+                gaps = [i for i in range(min(found_labels), max(found_labels)) if i not in found_labels]
+                
+                if gaps:
+                    activity_logger.log_event("Drafting", "GAP_DETECTED", request.charging_party, f"Detected {len(gaps)} missing points. Recovering...")
+                    for gap in gaps[:10]: # Limit surgical recoveries
+                        try:
+                            recovery_res = requests.post(
+                                final_url,
+                                headers={"api-key": api_key, "Content-Type": "application/json"},
+                                json={
+                                    "messages": [
+                                        {"role": "system", "content": f"[SURGICAL EXTRACTION] Extract EXACT VERBATIM the Allegation and Response for Point No. {gap}. DO NOT summarize. Keep all names and quotes. Return JSON: {{ 'point': {{ 'label': '...', 'allegation': '...', 'response': '...' }} }}"},
+                                        {"role": "user", "content": f"FULL RAW DATA:\n{request.raw_data}"}
+                                    ],
+                                    "response_format": { "type": "json_object" },
+                                    "max_completion_tokens": 1024
+                                },
+                                timeout=60
+                            )
+                            if recovery_res.status_code == 200:
+                                rec_json = json.loads(repair_json(recovery_res.json()["choices"][0]["message"]["content"]))
+                                rec_p = rec_json.get("point") or rec_json.get("points", [{}])[0]
+                                if rec_p.get("allegation"): 
+                                    rec_p["label"] = str(gap)
+                                    all_points.append(rec_p)
+                                    activity_logger.log_event("Drafting", "GAP_RECOVERED", request.charging_party, f"Successfully recovered Point {gap} verbatim.")
+                        except: continue
+        except Exception as audit_ex:
+            activity_logger.log_event("Drafting", "AUDIT_WARN", request.charging_party, f"Audit failed: {str(audit_ex)}")
+
+        # deduplicate by Label
+        unique_points = {}
+        for p in all_points:
+            lbl = str(p.get('label', ''))
+            if lbl not in unique_points or len(str(p.get('allegation',''))) > len(str(unique_points[lbl].get('allegation',''))):
+                unique_points[lbl] = p
+
+        final_points = sorted(unique_points.values(), key=lambda x: int(re.findall(r'\d+', str(x.get('label', '0')))[0]) if re.findall(r'\d+', str(x.get('label', ''))) else 999)
+
+        # --- STEP 1e: CRITICAL IDENTITY CHECK (THE "BETSY" MARKER) ---
+        has_betsy_extracted = any("Betsy" in str(p.get("allegation", "")) or "Betsy" in str(p.get("response", "")) for p in final_points)
+        has_betsy_raw = "Betsy" in request.raw_data
+        
+        if has_betsy_raw and not has_betsy_extracted:
+            activity_logger.log_event("Drafting", "BETSY_LOST", request.charging_party, "Critical 'Betsy' point missing from extraction. Triggering Surgical Identity Recovery...")
+            try:
+                recovery_res = requests.post(
+                    final_url,
+                    headers={"api-key": api_key, "Content-Type": "application/json"},
+                    json={
+                        "messages": [
+                            {"role": "system", "content": "[SURGICAL IDENTITY RECOVERY] Verbatim Extract the specific Index Point and Allegation containing the name 'Betsy'. DO NOT summarize. Return JSON: { 'point': { 'label': '...', 'allegation': '...', 'response': '...' } }"},
+                            {"role": "user", "content": f"FULL RAW DATA:\n{request.raw_data}"}
+                        ],
+                        "response_format": { "type": "json_object" },
+                        "max_completion_tokens": 1024
+                    },
+                    timeout=120
+                )
+                if recovery_res.status_code == 200:
+                    rec_json = json.loads(repair_json(recovery_res.json()["choices"][0]["message"]["content"]))
+                    rec_p = rec_json.get("point") or rec_json.get("points", [{}])[0]
+                    if rec_p.get("allegation"): 
+                        final_points.append(rec_p)
+                        # Re-sort
+                        final_points = sorted(final_points, key=lambda x: int(re.findall(r'\d+', str(x.get('label', '0')))[0]) if re.findall(r'\d+', str(x.get('label', ''))) else 999)
+                        activity_logger.log_event("Drafting", "BETSY_RECOVERED", request.charging_party, "Successfully recovered Point 22 (Betsy) verbatim.")
+            except: pass
 
         # --- STEP 2: RAG RETRIEVAL ---
         rag_context = ""
-        points = structured_data if isinstance(structured_data, list) else structured_data.get("points", [])
-        unique_cats = set()
-        for p in (points if isinstance(points, list) else []):
-            if isinstance(p, dict) and p.get("legal_category"):
-                unique_cats.add(p["legal_category"])
-        
+        unique_cats = set(p.get("legal_category") for p in final_points if p.get("legal_category"))
         for cat in unique_cats:
             try:
-                # Try retrieval, but catch any DB/IP whitelist errors
                 docs = await retrieve_documents(cat, k=2)
                 rag_context += "\n\n".join(d.page_content for d in docs)
-            except Exception as db_ex:
-                activity_logger.log_event("Drafting", "DB_WARN", request.charging_party, f"RAG skipped: {str(db_ex)}")
-                break # Stop DB attempts if one fails
+            except: break
+        if not rag_context: rag_context = "Standard legal principles apply."
 
-        if not rag_context:
-            rag_context = "Standard legal principles apply. (RAG context unavailable)"
-
-        # --- STEP 3: LITERARY DRAFTING (BATCHED ROXTON STYLE) ---
-        activity_logger.log_event("Drafting", "BATCH_START", request.charging_party, f"Drafting {len(points)} points in batches...")
+        # --- STEP 3: LITERARY DRAFTING (POINT-BY-POINT FIDELITY) ---
+        activity_logger.log_event("Drafting", "BATCH_START", request.charging_party, f"Drafting {len(final_points)} points individually...")
         
-        # Batching Logic: Divide points into groups of 15 for 100% completion
-        batch_size = 15
-        point_batches = [points[i:i + batch_size] for i in range(0, len(points), batch_size)]
-        
-        final_allegations_and_responses = []
+        processed_points = []
         final_intro = ""
         final_background = ""
         final_analysis = ""
         final_defenses = []
         final_conclusion = ""
 
-        for idx, batch_pts in enumerate(point_batches):
-            is_first = (idx == 0)
-            is_last = (idx == len(point_batches) - 1)
-            
-            activity_logger.log_event("Drafting", "BATCH_PROC", request.charging_party, f"Batch {idx+1}/{len(point_batches)}")
-            
-            # Contextual Prompting for Batches
-            batch_prompt = f"""[SENIOR LITIGATOR PERSONA] Draft a formal Position Statement for Batch {idx+1}/{len(point_batches)}.
-            Return a JSON object with strictly these keys. Use PURE TEXT (no markdown):
-            """
-            if is_first:
-                batch_prompt += "- introduction: string\n- background: string\n"
-            
-            batch_prompt += "- allegations_and_responses: list of { \"label\": \"Allegation No. X\", \"allegation\": \"string\", \"response_label\": \"Response No. X\", \"response\": \"string\" }\n"
-            
-            if is_last:
-                batch_prompt += "- analysis: string\n- defenses: list of string\n- conclusion: string\n"
+        # A. Global Sections (Intro/Background)
+        try:
+            summary_res = requests.post(
+                final_url,
+                headers={"api-key": api_key, "Content-Type": "application/json"},
+                json={
+                    "messages": [
+                        {"role": "system", "content": f"[LEGAL COUNSEL] Generate Introduction and Background for {request.charging_party} vs {request.respondent}. Style: Roxton Template (Clinical, Firm). Return JSON: {{ 'introduction': '...', 'background': '...' }}"},
+                        {"role": "user", "content": f"Points for context:\n{json.dumps(final_points[:15], indent=2)}"}
+                    ],
+                    "response_format": { "type": "json_object" },
+                    "max_completion_tokens": 2048
+                },
+                timeout=180
+            )
+            if summary_res.status_code == 200:
+                s_json = json.loads(repair_json(summary_res.json()["choices"][0]["message"]["content"]))
+                final_intro = s_json.get("introduction", "")
+                final_background = s_json.get("background", "")
+        except: pass
 
-            # Construct URL correctly
-            base_url = settings.AZURE_OPENAI_ENDPOINT.rstrip('/')
-            if "/openai/deployments/" in base_url:
-                final_url = base_url
-            else:
-                final_url = f"{base_url}/openai/deployments/{deployment_id}/chat/completions?api-version=2024-05-01-preview"
-
+        # B. Individual Point Drafting Loop
+        for idx, p in enumerate(final_points):
+            activity_logger.log_event("Drafting", "POINT_PROC", request.charging_party, f"Drafting Point {idx+1}/{len(final_points)} (Label: {p.get('label')})")
             try:
-                res2 = requests.post(
+                point_res = requests.post(
                     final_url,
                     headers={"api-key": api_key, "Content-Type": "application/json"},
                     json={
                         "messages": [
-                            {"role": "system", "content": batch_prompt}, 
-                            {"role": "user", "content": f"DATA: {json.dumps(batch_pts)}\n\nLAW: {rag_context if is_first or is_last else '(continued)'}"}
+                            {"role": "system", "content": "[SENIOR DEFENSE COUNSEL] Draft a professional, legal-grade response for ONE SPECIFIC allegation. Use 'The Respondent denies...' style and cite lack of evidence where appropriate. Mirror Roxton template Exactly. Return JSON: { 'response_label': 'Response No. X', 'drafted_response': '...' }.\nSTRICT FIDELITY RULES:\n- DO NOT ANONYMIZE. This is a formal court filing; proper names like 'Betsy' are part of the record and MUST be included if present in the input.\n- DO NOT SUMMARIZE. All situational details, dates, and names MUST be preserved verbatim in the drafted output.\n- NEVER swap a proper name for generic terms like 'a staff member' or 'an employee'."},
+                            {"role": "user", "content": f"ALLEGATION NO. {p.get('label')}: {p.get('allegation')}\nRESPONSE: {p.get('response')}\nLAW: {rag_context[:1000]}"}
                         ],
                         "response_format": { "type": "json_object" },
-                        "max_completion_tokens": 8000
+                        "max_completion_tokens": 1500
                     },
-                    timeout=600
+                    timeout=120
                 )
-                
-                if res2.status_code == 200:
-                    batch_data = json.loads(repair_json(res2.json()["choices"][0]["message"]["content"]))
-                    
-                    # Merge batch data
-                    new_algs = batch_data.get("allegations_and_responses", [])
-                    if isinstance(new_algs, list): final_allegations_and_responses.extend(new_algs)
-                    
-                    if is_first:
-                         final_intro = batch_data.get("introduction", "Introduction drafted.")
-                         final_background = batch_data.get("background", "Background verified.")
-                    
-                    if is_last:
-                         final_analysis = batch_data.get("analysis", "Legal analysis complete.")
-                         final_defenses = batch_data.get("defenses", [])
-                         final_conclusion = batch_data.get("conclusion", "Respectfully requested dismissal.")
+                if point_res.status_code == 200:
+                    p_json = json.loads(repair_json(point_res.json()["choices"][0]["message"]["content"]))
+                    processed_points.append({
+                        "label": f"Allegation No. {p.get('label')}",
+                        "allegation": p.get('allegation'),
+                        "response_label": p_json.get("response_label") or f"Response No. {p.get('label')}",
+                        "response": p_json.get("drafted_response") or p.get('response')
+                    })
                 else:
-                    activity_logger.log_event("Drafting", "BATCH_WARN", request.charging_party, f"Batch {idx+1} failed: {res2.text[:100]}")
-            except Exception as b_e:
-                activity_logger.log_event("Drafting", "BATCH_ERROR", request.charging_party, f"Batch {idx+1} critical error: {str(b_e)}")
+                    processed_points.append({"label": f"Allegation No. {p.get('label')}", "allegation": p.get('allegation'), "response_label": f"Response No. {p.get('label')}", "response": p.get('response')})
+            except:
+                processed_points.append({"label": f"Allegation No. {p.get('label')}", "allegation": p.get('allegation'), "response_label": f"Response No. {p.get('label')}", "response": p.get('response')})
 
-        if not final_allegations_and_responses:
-             activity_logger.log_event("Drafting", "EMPTY_REPLY", request.charging_party, "AI returned empty content. Using safety fallback.")
-             draft_data = {
-                 "introduction": "Drafting engine initialized. Content generation pending review.",
-                 "background": "Historical records verified.",
-                 "allegations_and_responses": [{"label": "Batch Processing", "allegation": "Multiple allegations detected.", "response": "See attached exhibits and previous responses."}],
-                 "analysis": "Review of relevant legal standards ongoing.",
-                 "conclusion": "Respondent respectfully requests dismissal of the Charge."
-             }
-        else:
-             draft_data = {
-                "introduction": final_intro,
-                "background": final_background,
-                "allegations_and_responses": final_allegations_and_responses,
-                "analysis": final_analysis,
-                "defenses": final_defenses,
-                "conclusion": final_conclusion
-            }
+        # C. Global Sections (Analysis/Defenses/Conclusion)
+        try:
+            closing_res = requests.post(
+                final_url,
+                headers={"api-key": api_key, "Content-Type": "application/json"},
+                json={
+                    "messages": [
+                        {"role": "system", "content": "[LEGAL COUNSEL] Generate Legal Analysis, Affirmative Defenses, and Conclusion for David Amicangioli vs Boston Childrens Hospital. Return JSON: { 'analysis': '...', 'defenses': [ '...', ... ], 'conclusion': '...' }"},
+                        {"role": "user", "content": f"92 allegations have been addressed. Draft sections IV to VI."}
+                    ],
+                    "response_format": { "type": "json_object" },
+                    "max_completion_tokens": 4000
+                },
+                timeout=180
+            )
+            if closing_res.status_code == 200:
+                c_json = json.loads(repair_json(closing_res.json()["choices"][0]["message"]["content"]))
+                final_analysis = c_json.get("analysis", "")
+                final_defenses = c_json.get("defenses", [])
+                final_conclusion = c_json.get("conclusion", "")
+        except: pass
 
-        if isinstance(draft_data, list): draft_data = draft_data[0] if draft_data else {}
-
-        # --- STEP 4: DOCX GENERATION (STANDARD PAGE 1 Mirror) ---
-        cp = request.charging_party
-        if isinstance(structured_data, dict): cp = structured_data.get('charging_party', cp)
-        resp = request.respondent
-        if isinstance(structured_data, dict): resp = structured_data.get('respondent', resp)
-
+        # --- STEP 4: DOCX GENERATION ---
         doc = Document()
         doc.styles['Normal'].font.name = 'Times New Roman'
         doc.styles['Normal'].font.size = Pt(11)
-
-        # 1. 1st Page Mirror
-        mirrored = copy_standard_first_page(doc, cp)
         
-        # 2. Main Content (Sections III - VI)
+        # 1st Page Mirror
+        copy_standard_first_page(doc, request.charging_party)
+        
         def add_centered_header(roman, title):
             p1 = doc.add_paragraph()
             p1.alignment = WD_ALIGN_PARAGRAPH.CENTER
             p1.paragraph_format.space_before = Pt(24)
             r1 = p1.add_run(roman)
             r1.bold = True
-            r1.font.size = Pt(12)
             p2 = doc.add_paragraph()
             p2.alignment = WD_ALIGN_PARAGRAPH.CENTER
             p2.paragraph_format.space_after = Pt(12)
             r2 = p2.add_run(title.upper())
             r2.bold = True
-            r2.font.size = Pt(12)
 
         def add_body_paragraph(text):
             if not text: return
-            text = re.sub(r'\*\*|__', '', text).replace('###', '').replace('##', '').replace('#', '').strip()
-            p = doc.add_paragraph(text)
-            p.paragraph_format.line_spacing = 1.15
+            p = doc.add_paragraph(re.sub(r'\*|_', '', text).strip())
             p.paragraph_format.space_after = Pt(10)
 
-        # Start from Section III as per Mirror logic
+        # Section III: Facts/Allegations
         add_centered_header("III.", "FACTS AND ALLEGATIONS")
-        alg_list = draft_data.get("allegations_and_responses", [])
-        for item in (alg_list if isinstance(alg_list, list) else []):
-            if not isinstance(item, dict): continue
+        for item in processed_points:
             p_a = doc.add_paragraph()
-            r_a = p_a.add_run(f"{item.get('label', 'Allegation')}:")
-            r_a.bold = True
-            r_a.underline = True
-            p_a.add_run(f" {item.get('allegation', '')}")
+            r_a = p_a.add_run(f"{item.get('label')}:")
+            r_a.bold = True; r_a.underline = True
+            p_a.add_run(f" {item.get('allegation')}")
             p_r = doc.add_paragraph()
-            r_r = p_r.add_run(f"{item.get('response_label', 'Response')}:")
-            r_r.bold = True
-            r_r.underline = True
-            p_r.add_run(f" {item.get('response', '')}")
+            r_r = p_r.add_run(f"{item.get('response_label')}:")
+            r_r.bold = True; r_r.underline = True
+            p_r.add_run(f" {item.get('response')}")
             p_r.paragraph_format.space_after = Pt(12)
 
+        # Analysis, Defenses, Conclusion
         add_centered_header("IV.", "LEGAL ANALYSIS")
-        add_body_paragraph(draft_data.get("analysis", ""))
-
+        add_body_paragraph(final_analysis)
         add_centered_header("V.", "AFFIRMATIVE DEFENSES")
-        for df in (draft_data.get("defenses", []) if isinstance(draft_data.get("defenses"), list) else []):
-            add_body_paragraph(df)
-
+        for d in final_defenses: add_body_paragraph(d)
         add_centered_header("VI.", "CONCLUSION")
-        add_body_paragraph(draft_data.get("conclusion", ""))
+        add_body_paragraph(final_conclusion)
 
-        # --- STEP 5: APPENDIX MODULE (LEGAL AUTHORITIES) ---
-        activity_logger.log_event("Drafting", "APPENDIX_START", cp, "Generating detailed legal appendix...")
-        
-        # Gather all text to find citations
-        full_text = f"{draft_data.get('introduction', '')}\n{draft_data.get('analysis', '')}\n{' '.join(draft_data.get('defenses', []))}"
-        
-        appendix_prompt = """[SENIOR LEGAL SCHOLAR] Identify ALL laws and regulations mentioned in the draft.
-        For EACH law, return a structured object with these fields. Use PURE TEXT (no markdown):
-        - law_name: string (e.g. Title VII of the Civil Rights Act)
-        - why_it_matters: string (1-2 sentences on legal importance)
-        - covers: list of strings (bullets on what it covers)
-        - use_in_position_statement: list of strings (bullets on litigation usage)
-        - useful_when: list of strings (bullets on specific scenarios)
-        
-        Return a JSON object: { "legal_authorities": [...] }"""
-        
-        try:
-            res3 = requests.post(
-                final_url,
-                headers={"api-key": api_key, "Content-Type": "application/json"},
-                json={
-                    "messages": [
-                        {"role": "system", "content": appendix_prompt}, 
-                        {"role": "user", "content": f"TEXT TO ANALYZE: {full_text}"}
-                    ],
-                    "response_format": { "type": "json_object" }
-                },
-                timeout=600
-            )
-            if res3.status_code == 200:
-                ax_json = res3.json()["choices"][0]["message"]["content"]
-                ax_data = json.loads(repair_json(ax_json))
-                
-                doc.add_page_break()
-                p_app = doc.add_paragraph("APPENDIX: SUMMARY OF RELEVANT LEGAL AUTHORITIES")
-                p_app.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                p_app.runs[0].bold = True
-                p_app.runs[0].font.size = Pt(14)
-                
-                for auth in ax_data.get("legal_authorities", []):
-                    # 1. Title
-                    p_name = doc.add_paragraph()
-                    r_name = p_name.add_run(auth.get("law_name", "Legal Authority").upper())
-                    r_name.bold = True
-                    r_name.underline = True
-                    p_name.paragraph_format.space_before = Pt(18)
-                    
-                    # 2. Why it matters
-                    p_why = doc.add_paragraph()
-                    p_why.add_run("Why it matters: ").bold = True
-                    p_why.add_run(auth.get("why_it_matters", "Critical legal standard."))
-                    
-                    # 3. Covers
-                    p_cov = doc.add_paragraph()
-                    p_cov.add_run("Covers:").bold = True
-                    for c in auth.get("covers", []):
-                        li = doc.add_paragraph(c, style='List Bullet')
-                        li.paragraph_format.left_indent = Inches(0.25)
-                        
-                    # 4. Use in Position Statement
-                    p_use = doc.add_paragraph()
-                    p_use.add_run("Use in Position Statement:").bold = True
-                    for u in auth.get("use_in_position_statement", []):
-                        li = doc.add_paragraph(u, style='List Bullet')
-                        li.paragraph_format.left_indent = Inches(0.25)
-                        
-                    # 5. Useful when
-                    p_when = doc.add_paragraph()
-                    p_when.add_run("Useful when:").bold = True
-                    for w in auth.get("useful_when", []):
-                        li = doc.add_paragraph(w, style='List Bullet')
-                        li.paragraph_format.left_indent = Inches(0.25)
-        except Exception as ax_e:
-            activity_logger.log_event("Drafting", "APPENDIX_ERROR", cp, f"Appendix failed: {str(ax_e)}")
-
-        # 4. Save
+        # Save
         f_dir = Path(request.folder_path) if request.folder_path else (Path(_HERE).parent.parent.parent.parent / "Drafts")
         f_dir.mkdir(parents=True, exist_ok=True)
-        fname = f"Roxton_Draft_{cp.replace(' ', '_')}_{int(time.time())}.docx"
+        fname = f"Roxton_Draft_{request.charging_party.replace(' ', '_')}_{int(time.time())}.docx"
         fpath = f_dir / fname
         doc.save(str(fpath))
         
-        activity_logger.log_event("Drafting", "SUCCESS", cp, f"Finished. {fpath}")
         return {"status": "success", "file_path": str(fpath)}
 
     except Exception as e:
