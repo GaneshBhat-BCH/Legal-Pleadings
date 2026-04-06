@@ -1,0 +1,13 @@
+{
+  "apps": [
+    {
+      "name": "legal-pleadings-api",
+      "script": "app/main.py",
+      "cwd": "C:\\Users\\srvidhCH273818\\Documents\\Legal-Pleadings-main\\backend",
+      "interpreter": "C:\\Users\\srvidhCH273818\\Documents\\Legal-Pleadings-main\\backend\\venv\\Scripts\\python.exe",
+      "env": {
+        "PYTHONPATH": "C:\\Users\\srvidhCH273818\\Documents\\Legal-Pleadings-main\\backend"
+      }
+    }
+  ]
+}

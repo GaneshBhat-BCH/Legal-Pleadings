@@ -1,0 +1,30 @@
+[project]
+name = "legal-pleadings-rag"
+version = "0.1.0"
+description = "RAG system for Legal Pleadings analysis"
+requires-python = ">=3.9"
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "python-dotenv",
+    "asyncpg",
+    "openai",
+    "pypdf",
+    "langchain",
+    "langchain-community",
+    "langchain-openai",
+    "langchain-postgres",
+    "psycopg[binary]",
+    "pgvector",
+    "json_repair",
+    "langgraph",
+    "tiktoken",
+    "sqlalchemy",
+    "pydantic-settings"
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-asyncio"
+]

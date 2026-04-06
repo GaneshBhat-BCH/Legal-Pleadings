@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+
+# Temporary files
+temp_*.html
+activity_log_*.csv
+data/*
+!data/.gitkeep
+logs/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Drafting
+Drafts/
+backend/Drafts/
+
+# Git Portable
+git-portable/
+PortableGit.exe
