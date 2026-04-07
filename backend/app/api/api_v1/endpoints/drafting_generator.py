@@ -318,7 +318,7 @@ async def generate_position_draft(request: CombinedDraftRequest):
             analysis_prompt = """[SENIOR LEGAL ANALYST] Extract ALL individual allegations and their corresponding responses verbatim.
             STRICT RULES:
             - ZERO MERGING. Every numbered index (1, 2, 3...) must be its own unique entry.
-            - NO SUMMARIZATION. Keep all names (e.g. 'Andrea Roxton', 'Genevieve Benoit') and verbatim quotes.
+            - NO SUMMARIZATION. Keep all client names and verbatim quotes.
             - Pattern: Identify the index number, then the allegation text, then the employer's response.
             - IMPORTANT: The data is unstructured. Do not be confused by commas inside legal sentences.
             - Return JSON: { "points": [ { "label": "X", "allegation": "...", "response": "..." }, ... ] }
@@ -548,6 +548,8 @@ async def generate_position_draft(request: CombinedDraftRequest):
                 "Andrea Roxton": request.charging_party,
                 "BOSTON CHILDREN'S HOSPITAL": request.respondent,
                 "Boston Children's Hospital": request.respondent,
+                "Genevieve Benoit": "[Lead Attorney Name]",
+                "GENEVIEVE BENOIT": "[LEAD ATTORNEY NAME]",
                 "March 25, 2026": datetime.now().strftime("%B %d, %Y"),
                 "BCH": request.respondent
             }
@@ -561,8 +563,7 @@ async def generate_position_draft(request: CombinedDraftRequest):
                 "[NEED LAWYER INPUT: Investigator Name]",
                 "[NEED LAWYER INPUT: Investigator Email]",
                 "[NEED LAWYER INPUT: MCAD No.]",
-                "[NEED LAWYER INPUT: EEOC No.]",
-                "Genevieve Benoit" # If this exists in template, we might want to replace with "[Lead Attorney]"
+                "[NEED LAWYER INPUT: EEOC No.]"
             ]
 
             # Replace in Tables (Logo and Caption)
@@ -606,7 +607,7 @@ async def generate_position_draft(request: CombinedDraftRequest):
         def add_body_paragraph(text):
             if not text: return
             p = doc.add_paragraph(sanitize_xml(text))
-            p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+            p.alignment = WD_ALIGN_PARAGRAPH.LEFT
             p.paragraph_format.first_line_indent = Inches(0.5)
             p.paragraph_format.space_after = Pt(12)
             p.paragraph_format.line_spacing = 1.15
