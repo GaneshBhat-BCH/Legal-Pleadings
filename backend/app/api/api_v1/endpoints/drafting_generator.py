@@ -224,7 +224,6 @@ def chunk_text(text: str, max_chars: int = 6000, overlap: int = 500) -> list:
             break
             
     return chunks
-    return chunks
 
 async def generate_intro_history(url, key, cp, resp, brief_points):
     """Generates Section I (Introduction) and II (Procedural History)."""
