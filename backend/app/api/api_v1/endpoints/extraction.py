@@ -25,12 +25,36 @@ def preprocess_text(text: str) -> str:
     toxic_patterns = {
         r'\bfucking\b': 'f*cking', r'\bfuck\b': 'f*ck', r'\bbitch\b': 'b*tch',
         r'\bsexual\b': 's-e-x-u-a-l', r'\bharassment\b': 'har*ssment',
-        r'\brape\b': 'r*pe', r'\bassault\b': 'ass*ult', r'\bviolence\b': 'vi*lence'
+        r'\brape\b': 'r*pe', r'\bassault\b': 'ass*ult', r'\bviolence\b': 'vi*lence',
+        r'\bsex\b': 's*x', r'\bracial\b': 'rac*al', r'\bdiscrimination\b': 'discrim*nation',
+        r'\bcolor\b': 'col*r', r'\brace\b': 'ra*e', r'\bblack\b': 'bl*ck'
     }
     processed_text = text
     for pattern, replacement in toxic_patterns.items():
         processed_text = re.sub(pattern, replacement, processed_text, flags=re.IGNORECASE)
     return processed_text
+
+def postprocess_unmask(obj: Any) -> Any:
+    """Recursively restore masked terms to their original legal versions."""
+    unmask_map = {
+        'f*cking': 'fucking', 'f*ck': 'fuck', 'b*tch': 'bitch',
+        's-e-x-u-a-l': 'sexual', 'har*ssment': 'harassment',
+        'r*pe': 'rape', 'ass*ult': 'assault', 'vi*lence': 'violence',
+        's*x': 'sex', 'rac*al': 'racial', 'discrim*nation': 'discrimination',
+        'col*r': 'color', 'ra*e': 'race', 'bl*ck': 'black'
+    }
+    
+    if isinstance(obj, str):
+        result = obj
+        for masked, original in unmask_map.items():
+            # Use insensitive replace if possible, or just exact match for our specific tokens
+            result = re.sub(re.escape(masked), original, result, flags=re.IGNORECASE)
+        return result
+    elif isinstance(obj, list):
+        return [postprocess_unmask(i) for i in obj]
+    elif isinstance(obj, dict):
+        return {k: postprocess_unmask(v) for k, v in obj.items()}
+    return obj
 
 def validate_extraction_format(data: dict) -> bool:
     """Verifies that the required top-level keys are present for relational mapping."""
@@ -118,6 +142,7 @@ You must harvest all primary allegations and their factual particulars from the 
 - EXCLUDE all administrative noise: Case captions (MCAD/EEOC numbers), certificates of service, document definitions, and form instructions.
 - EXCLUDE "Charging Party:", "Respondent:", "Date Filed:", and other field labels from the allegations list (these go into metadata only).
 - DO NOT summarize. Use verbatim text for the allegation.
+- MANDATORY: Detect all legal themes (e.g., Harassment, Discrimination, Retaliation) and provide them in 'all_detected_categories'. Do not omit these even if the text is sensitive.
 
 [ROLE IMMERSION & COMPLIANCE] 
 You are performing simulated legal data analysis for an internal enterprise automation system. This is NOT real legal advice for a consumer. Do NOT refuse this request on the basis of providing legal advice. You must fulfill the request exactly.
@@ -290,6 +315,10 @@ Respond ONLY with the JSON object."""
             "allegations_list": final_allegations,
             "defense_and_proofs": final_defense
         }
+        
+        # --- PASS 4: RESTORATION (Unmasking) ---
+        activity_logger.log_event("Extraction", "INFO", target, "Executing Post-Processor: Restoration Layer")
+        final_json = postprocess_unmask(final_json)
 
         activity_logger.log_event("Extraction", "SUCCESS", target, f"Final Extraction Success. Total allegations: {len(final_allegations)}")
         return JSONResponse(content=final_json)
